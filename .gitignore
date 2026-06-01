@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# pgstack-prod specific
+.env
+*.sql.gz
+backups/
+pgadmin/pgadmin4.db

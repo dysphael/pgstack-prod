@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Production DB",
+      "Group": "Production",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "appuser",
+      "SSLMode": "prefer",
+      "Comment": "PostgreSQL via internal Docker network"
+    }
+  }
+}
