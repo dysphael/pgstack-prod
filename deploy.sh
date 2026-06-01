@@ -40,15 +40,18 @@ validate_passwords() {
 }
 
 print_connection_info() {
-    info "Stack is running. Connection strings:"
+    info "Stack is running. Access URLs:"
+    echo ""
+    echo "  pgAdmin:  https://${PGADMIN_DOMAIN}"
+    echo "  Netdata:  https://${NETDATA_DOMAIN}"
+    echo ""
+    info "Connection strings:"
     echo ""
     echo "  Docker network (db_internal):"
     echo "    postgresql://${POSTGRES_USER}:****@pgbouncer:5432/${POSTGRES_DB}"
     echo ""
     echo "  Host loopback (VPS local):"
     echo "    postgresql://${POSTGRES_USER}:****@localhost:5432/${POSTGRES_DB}"
-    echo ""
-    echo "  pgAdmin: https://${PGADMIN_DOMAIN}"
 }
 
 cmd_up() {
@@ -70,14 +73,21 @@ cmd_down() {
     info "Stopping pgstack-prod..."
     docker compose down
     ok "Stack stopped."
-    warn "Named volumes (pgdata, pgbackups) are preserved. Data is intact."
+    warn "Named volumes (pgdata, pgbackups, netdata_lib, netdata_cache) are preserved. Data is intact."
 }
 
 cmd_restart() {
     load_env
-    info "Restarting pgstack-prod..."
-    docker compose restart
-    ok "Stack restarted."
+    local service="${1:-}"
+    if [[ -n "$service" ]]; then
+        info "Restarting ${service}..."
+        docker compose restart "$service"
+        ok "Service ${service} restarted."
+    else
+        info "Restarting pgstack-prod..."
+        docker compose restart
+        ok "Stack restarted."
+    fi
 }
 
 cmd_status() {
@@ -86,8 +96,8 @@ cmd_status() {
     docker compose ps
     echo ""
     info "Stack volumes:"
-    docker volume ls --filter "name=pgstack-prod" --filter "name=pgdata" --filter "name=pgbackups" 2>/dev/null || \
-        docker volume ls | grep -E 'pgstack-prod|pgdata|pgbackups' || true
+    docker volume ls --filter "name=pgstack-prod" 2>/dev/null || \
+        docker volume ls | grep -E 'pgstack-prod|pgdata|pgbackups|netdata_lib|netdata_cache' || true
 }
 
 cmd_logs() {
@@ -145,6 +155,25 @@ cmd_restore() {
     ok "Restore completed."
 }
 
+cmd_htpasswd() {
+    local user="${1:-}"
+    local password="${2:-}"
+
+    if [[ -z "$user" || -z "$password" ]]; then
+        error "Usage: ./deploy.sh htpasswd <user> <password>"
+        exit 1
+    fi
+
+    info "Generating htpasswd entry for Docker Compose..."
+    local entry
+    entry="$(docker run --rm httpd:alpine htpasswd -nbB "$user" "$password" | sed 's/\$/\$\$/g')"
+
+    ok "Paste this into your .env file:"
+    echo ""
+    echo "NETDATA_BASIC_AUTH=${entry}"
+    echo ""
+}
+
 cmd_help() {
     cat <<'EOF'
 pgstack-prod — Deployment and operations helper
@@ -152,19 +181,22 @@ pgstack-prod — Deployment and operations helper
 Usage: ./deploy.sh [command]
 
 Commands:
-  up              Start the stack (validates .env and passwords first)
-  down            Stop the stack (volumes are preserved)
-  restart         Restart all services
-  status          Show service status and volumes
-  logs [service]  Tail logs (optionally for a single service)
-  shell           Open psql inside the postgres container
-  backup          Create a manual pg_dump backup (gzip)
-  restore <file>  Restore from a .sql.gz backup file
-  help            Show this help message
+  up                    Start the stack (validates .env and passwords first)
+  down                  Stop the stack (volumes are preserved)
+  restart [service]     Restart all services or a specific one
+  status                Show service status and volumes
+  logs [service]        Tail logs (optionally for a single service)
+  shell                 Open psql inside the postgres container
+  backup                Create a manual pg_dump backup (gzip)
+  restore <file>        Restore from a .sql.gz backup file
+  htpasswd <user> <pw>  Generate NETDATA_BASIC_AUTH value for .env
+  help                  Show this help message
 
 Examples:
   ./deploy.sh up
-  ./deploy.sh logs postgres
+  ./deploy.sh htpasswd admin mypassword
+  ./deploy.sh logs netdata
+  ./deploy.sh restart postgres
   ./deploy.sh backup
   ./deploy.sh restore backup_manual_20260101_120000.sql.gz
 EOF
@@ -177,12 +209,12 @@ main() {
     case "$command" in
         up)      cmd_up ;;
         down)    cmd_down ;;
-        restart) cmd_restart ;;
-        status)  cmd_status ;;
+        restart) cmd_restart "$@" ;;
         logs)    cmd_logs "$@" ;;
         shell)   cmd_shell ;;
         backup)  cmd_backup ;;
         restore) cmd_restore "$@" ;;
+        htpasswd) cmd_htpasswd "$@" ;;
         help|-h|--help) cmd_help ;;
         *)
             error "Unknown command: ${command}"

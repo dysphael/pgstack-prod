@@ -222,3 +222,6 @@ __marimo__/
 *.sql.gz
 backups/
 pgadmin/pgadmin4.db
+netdata/lib/
+netdata/cache/
+netdata/run/

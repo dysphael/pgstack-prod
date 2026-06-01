@@ -1,4 +1,4 @@
-# pgstack-prod — Production PostgreSQL 16 stack with PgBouncer, pgAdmin, and automated backups.
+# pgstack-prod — Production PostgreSQL 16 stack with PgBouncer, pgAdmin, Netdata, and automated backups.
 # Deploy with: ./deploy.sh up
 
 version: "3.9"
@@ -8,11 +8,17 @@ networks:
     external: true
   db_internal:
     internal: true
+  monitor_internal:
+    internal: true
 
 volumes:
   pgdata:
     driver: local
   pgbackups:
+    driver: local
+  netdata_lib:
+    driver: local
+  netdata_cache:
     driver: local
 
 services:
@@ -22,6 +28,7 @@ services:
     restart: always
     networks:
       - db_internal
+      - monitor_internal
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -140,4 +147,48 @@ services:
       driver: json-file
       options:
         max-size: "5m"
+        max-file: "3"
+
+  netdata:
+    image: netdata/netdata:stable
+    container_name: netdata
+    restart: always
+    hostname: ${NETDATA_HOSTNAME}
+    networks:
+      - monitor_internal
+      - traefik_proxy
+    environment:
+      NETDATA_CLAIM_TOKEN: ""
+      NETDATA_CLAIM_URL: https://app.netdata.cloud
+      NETDATA_CLAIM_ROOMS: ""
+      DO_NOT_TRACK: 1
+    volumes:
+      - netdata_lib:/var/lib/netdata
+      - netdata_cache:/var/cache/netdata
+      - ./netdata/netdata.conf:/etc/netdata/netdata.conf:ro
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    pid: host
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netdata.rule=Host(`${NETDATA_DOMAIN}`)"
+      - "traefik.http.routers.netdata.entrypoints=websecure"
+      - "traefik.http.routers.netdata.tls.certresolver=letsencrypt"
+      - "traefik.http.services.netdata.loadbalancer.server.port=19999"
+      - "traefik.http.routers.netdata.middlewares=netdata-auth,netdata-ipwhitelist"
+      - "traefik.http.middlewares.netdata-auth.basicauth.users=${NETDATA_BASIC_AUTH}"
+      - "traefik.http.middlewares.netdata-ipwhitelist.ipallowlist.sourcerange=${NETDATA_ALLOWED_IPS}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
         max-file: "3"
