@@ -24,7 +24,7 @@ Intended for experienced developers and DevOps engineers who need a reliable, ma
 ├─────────────────┼──────────────────────────────────────┼──────────────────────────────────────┤
 │ postgres        │ postgres:16-alpine                   │ db_internal + monitor_internal       │
 │                 │                                      │ no ports                             │
-│ pgbouncer       │ bitnami/pgbouncer:latest             │ 127.0.0.1:5432 (loopback)            │
+│ pgbouncer       │ neondatabase/pgbouncer (Bitnami fork)│ 127.0.0.1:5432 (loopback)            │
 │ pgadmin         │ dpage/pgadmin4:latest                │ Traefik HTTPS + IP whitelist         │
 │ postgres-backup │ prodrigestivill/postgres-backup-local│ db_internal only — no ports          │
 │                 │ :16-alpine                           │                                      │

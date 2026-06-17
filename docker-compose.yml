@@ -1,8 +1,6 @@
 # pgstack-prod — Production PostgreSQL 16 stack with PgBouncer, pgAdmin, Netdata, and automated backups.
 # Deploy with: ./deploy.sh up
 
-version: "3.9"
-
 networks:
   traefik_proxy:
     external: true
@@ -53,7 +51,7 @@ services:
         max-file: "3"
 
   pgbouncer:
-    image: bitnami/pgbouncer:latest
+    image: neondatabase/pgbouncer:1.24.1-2305be8887b9-21147949919
     container_name: pgbouncer
     restart: always
     networks:
