@@ -31,10 +31,79 @@ load_env() {
     set +a
 }
 
+traefik_network_name() {
+    echo "${TRAEFIK_NETWORK:-traefik_proxy}"
+}
+
+find_traefik_containers() {
+    local containers
+    containers="$(docker ps --filter "ancestor=traefik" --format '{{.Names}}' 2>/dev/null || true)"
+    if [[ -z "$containers" ]]; then
+        containers="$(docker ps --format '{{.Names}}' | grep -Ei 'traefik' || true)"
+    fi
+    echo "$containers"
+}
+
+container_on_network() {
+    local container="$1"
+    local network="$2"
+    docker inspect "$container" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null \
+        | grep -qw "$network"
+}
+
+ensure_traefik_network() {
+    local network
+    network="$(traefik_network_name)"
+
+    info "Ensuring Docker network exists: ${network}"
+    docker network create "$network" 2>/dev/null || true
+
+    local traefik_containers
+    traefik_containers="$(find_traefik_containers)"
+
+    if [[ -z "$traefik_containers" ]]; then
+        warn "Traefik container not found on this host."
+        warn "If Traefik runs elsewhere, connect it manually to network '${network}'."
+        return 0
+    fi
+
+    while IFS= read -r container; do
+        [[ -z "$container" ]] && continue
+        if container_on_network "$container" "$network"; then
+            ok "Traefik '${container}' already attached to '${network}'."
+        else
+            info "Connecting Traefik '${container}' to network '${network}'..."
+            if docker network connect "$network" "$container"; then
+                ok "Traefik '${container}' connected to '${network}'."
+            else
+                warn "Failed to connect '${container}' to '${network}'."
+            fi
+        fi
+    done <<< "$traefik_containers"
+}
+
 validate_passwords() {
     if [[ "${POSTGRES_PASSWORD:-}" == "CHANGE_ME_STRONG_PASSWORD" ]]; then
         error "POSTGRES_PASSWORD is still set to the placeholder value."
         error "Edit .env and set a strong password before deploying."
+        exit 1
+    fi
+}
+
+validate_domains() {
+    local missing=0
+
+    if [[ -z "${PGADMIN_DOMAIN:-}" || "${PGADMIN_DOMAIN}" == "db.yourdomain.com" ]]; then
+        error "PGADMIN_DOMAIN is not configured in .env"
+        missing=1
+    fi
+
+    if [[ -z "${NETDATA_DOMAIN:-}" || "${NETDATA_DOMAIN}" == "metrics.yourdomain.com" ]]; then
+        error "NETDATA_DOMAIN is not configured in .env"
+        missing=1
+    fi
+
+    if [[ "${missing}" -ne 0 ]]; then
         exit 1
     fi
 }
@@ -57,15 +126,16 @@ print_connection_info() {
 cmd_up() {
     load_env
     validate_passwords
-
-    info "Ensuring traefik_proxy network exists..."
-    docker network create traefik_proxy 2>/dev/null || true
+    validate_domains
+    ensure_traefik_network
 
     info "Starting pgstack-prod..."
     docker compose up -d --remove-orphans
 
     ok "Stack deployed successfully."
     print_connection_info
+    echo ""
+    info "Run './deploy.sh check' if pgAdmin or Netdata do not load immediately."
 }
 
 cmd_down() {
@@ -98,6 +168,72 @@ cmd_status() {
     info "Stack volumes:"
     docker volume ls --filter "name=pgstack-prod" 2>/dev/null || \
         docker volume ls | grep -E 'pgstack-prod|pgdata|pgbackups|netdata_lib|netdata_cache' || true
+}
+
+cmd_check() {
+    load_env
+    local network
+    network="$(traefik_network_name)"
+
+    info "pgstack-prod diagnostics"
+    echo ""
+
+    info "Configured domains:"
+    echo "  pgAdmin:  ${PGADMIN_DOMAIN}"
+    echo "  Netdata:  ${NETDATA_DOMAIN}"
+    echo "  Traefik network: ${network}"
+    echo ""
+
+    info "Container health:"
+    docker compose ps
+    echo ""
+
+    info "Traefik connectivity:"
+    local traefik_containers
+    traefik_containers="$(find_traefik_containers)"
+    if [[ -z "$traefik_containers" ]]; then
+        warn "No Traefik container detected."
+    else
+        while IFS= read -r container; do
+            [[ -z "$container" ]] && continue
+            if container_on_network "$container" "$network"; then
+                ok "Traefik '${container}' is on '${network}'."
+            else
+                error "Traefik '${container}' is NOT on '${network}'."
+                info "Fix: ./deploy.sh up   (auto-connects Traefik)"
+            fi
+        done <<< "$traefik_containers"
+    fi
+    echo ""
+
+    info "Internal service checks:"
+    if docker compose exec -T pgadmin wget -q --spider http://127.0.0.1:80/misc/ping 2>/dev/null; then
+        ok "pgAdmin responds on port 80 inside the container."
+    else
+        error "pgAdmin is not responding yet. Check: ./deploy.sh logs pgadmin"
+    fi
+
+    if docker compose exec -T netdata curl -fsS http://127.0.0.1:19999/api/v1/info >/dev/null 2>&1; then
+        ok "Netdata responds on port 19999 inside the container."
+    else
+        error "Netdata is not responding yet. Check: ./deploy.sh logs netdata"
+    fi
+    echo ""
+
+    info "DNS checks (must point to this server's public IP):"
+    if command -v dig >/dev/null 2>&1; then
+        dig +short A "${PGADMIN_DOMAIN}" || true
+        dig +short A "${NETDATA_DOMAIN}" || true
+    else
+        warn "dig not installed; verify DNS A records manually."
+    fi
+    echo ""
+
+    info "If Traefik still shows 404/Bad Gateway:"
+    echo "  1. Confirm DNS A records for both domains."
+    echo "  2. Run: ./deploy.sh up"
+    echo "  3. Wait ~90s for pgAdmin/Netdata healthchecks."
+    echo "  4. Inspect Traefik logs for certificate/router errors."
 }
 
 cmd_logs() {
@@ -185,7 +321,8 @@ Commands:
   down                  Stop the stack (volumes are preserved)
   restart [service]     Restart all services or a specific one
   status                Show service status and volumes
-  logs [service]        Tail logs (optionally for a single service)
+  check                 Diagnose Traefik/network/DNS/service health
+  logs [service]        Tail logs (all services or one)
   shell                 Open psql inside the postgres container
   backup                Create a manual pg_dump backup (gzip)
   restore <file>        Restore from a .sql.gz backup file
@@ -194,6 +331,7 @@ Commands:
 
 Examples:
   ./deploy.sh up
+  ./deploy.sh check
   ./deploy.sh htpasswd admin mypassword
   ./deploy.sh logs netdata
   ./deploy.sh restart postgres
@@ -210,6 +348,8 @@ main() {
         up)      cmd_up ;;
         down)    cmd_down ;;
         restart) cmd_restart "$@" ;;
+        status)  cmd_status ;;
+        check)   cmd_check ;;
         logs)    cmd_logs "$@" ;;
         shell)   cmd_shell ;;
         backup)  cmd_backup ;;

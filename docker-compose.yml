@@ -4,6 +4,7 @@
 networks:
   traefik_proxy:
     external: true
+    name: ${TRAEFIK_NETWORK:-traefik_proxy}
   db_internal:
     internal: true
   monitor_internal:
@@ -56,7 +57,6 @@ services:
     restart: always
     networks:
       - db_internal
-      - traefik_proxy
     environment:
       POSTGRESQL_HOST: postgres
       POSTGRESQL_PORT: 5432
@@ -100,19 +100,38 @@ services:
       PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
       PGADMIN_CONFIG_LOGIN_BANNER: '"Restricted access. Authorized personnel only."'
       PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: 40
+      PGADMIN_CONFIG_PROXY_X_FOR_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PROTO_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_HOST_COUNT: "1"
+      PGADMIN_CONFIG_SESSION_COOKIE_SECURE: "True"
+      PGADMIN_CONFIG_WTF_CSRF_SSL_STRICT: "False"
     volumes:
       - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/misc/ping || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 90s
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.pgadmin.rule=Host(`${PGADMIN_DOMAIN}`)"
-      - "traefik.http.routers.pgadmin.entrypoints=websecure"
-      - "traefik.http.routers.pgadmin.tls.certresolver=letsencrypt"
-      - "traefik.http.services.pgadmin.loadbalancer.server.port=80"
-      - "traefik.http.routers.pgadmin.middlewares=pgadmin-ipwhitelist"
-      - "traefik.http.middlewares.pgadmin-ipwhitelist.ipallowlist.sourcerange=${PGADMIN_ALLOWED_IPS}"
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik_proxy}
+      - traefik.http.routers.pgstack-pgadmin.rule=Host(`${PGADMIN_DOMAIN}`)
+      - traefik.http.routers.pgstack-pgadmin.entrypoints=${TRAEFIK_ENTRYPOINT_SECURE:-websecure}
+      - traefik.http.routers.pgstack-pgadmin.tls=true
+      - traefik.http.routers.pgstack-pgadmin.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.pgstack-pgadmin.service=pgstack-pgadmin
+      - traefik.http.services.pgstack-pgadmin.loadbalancer.server.port=80
+      - traefik.http.routers.pgstack-pgadmin.middlewares=pgstack-pgadmin-ipwhitelist
+      - traefik.http.middlewares.pgstack-pgadmin-ipwhitelist.ipallowlist.sourcerange=${PGADMIN_ALLOWED_IPS}
+      - traefik.http.routers.pgstack-pgadmin-http.rule=Host(`${PGADMIN_DOMAIN}`)
+      - traefik.http.routers.pgstack-pgadmin-http.entrypoints=${TRAEFIK_ENTRYPOINT_INSECURE:-web}
+      - traefik.http.routers.pgstack-pgadmin-http.middlewares=pgstack-pgadmin-redirect
+      - traefik.http.middlewares.pgstack-pgadmin-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.pgstack-pgadmin-redirect.redirectscheme.permanent=true
     logging:
       driver: json-file
       options:
@@ -176,15 +195,29 @@ services:
     security_opt:
       - apparmor:unconfined
     pid: host
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:19999/api/v1/info >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 90s
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.netdata.rule=Host(`${NETDATA_DOMAIN}`)"
-      - "traefik.http.routers.netdata.entrypoints=websecure"
-      - "traefik.http.routers.netdata.tls.certresolver=letsencrypt"
-      - "traefik.http.services.netdata.loadbalancer.server.port=19999"
-      - "traefik.http.routers.netdata.middlewares=netdata-auth,netdata-ipwhitelist"
-      - "traefik.http.middlewares.netdata-auth.basicauth.users=${NETDATA_BASIC_AUTH}"
-      - "traefik.http.middlewares.netdata-ipwhitelist.ipallowlist.sourcerange=${NETDATA_ALLOWED_IPS}"
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik_proxy}
+      - traefik.http.routers.pgstack-netdata.rule=Host(`${NETDATA_DOMAIN}`)
+      - traefik.http.routers.pgstack-netdata.entrypoints=${TRAEFIK_ENTRYPOINT_SECURE:-websecure}
+      - traefik.http.routers.pgstack-netdata.tls=true
+      - traefik.http.routers.pgstack-netdata.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.pgstack-netdata.service=pgstack-netdata
+      - traefik.http.services.pgstack-netdata.loadbalancer.server.port=19999
+      - traefik.http.routers.pgstack-netdata.middlewares=pgstack-netdata-auth,pgstack-netdata-ipwhitelist
+      - traefik.http.middlewares.pgstack-netdata-auth.basicauth.users=${NETDATA_BASIC_AUTH}
+      - traefik.http.middlewares.pgstack-netdata-ipwhitelist.ipallowlist.sourcerange=${NETDATA_ALLOWED_IPS}
+      - traefik.http.routers.pgstack-netdata-http.rule=Host(`${NETDATA_DOMAIN}`)
+      - traefik.http.routers.pgstack-netdata-http.entrypoints=${TRAEFIK_ENTRYPOINT_INSECURE:-web}
+      - traefik.http.routers.pgstack-netdata-http.middlewares=pgstack-netdata-redirect
+      - traefik.http.middlewares.pgstack-netdata-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.pgstack-netdata-redirect.redirectscheme.permanent=true
     logging:
       driver: json-file
       options:

@@ -233,10 +233,11 @@ Prompts for confirmation before overwriting the target database.
 
 | Command | Description |
 |---------|-------------|
-| `up` | Validate `.env`, ensure Traefik network exists, start stack |
+| `up` | Validate `.env`, connect Traefik to shared network, start stack |
 | `down` | Stop stack (volumes preserved) |
 | `restart [service]` | Restart all services or a specific one |
 | `status` | Show service status and volumes |
+| `check` | Diagnose Traefik connectivity, DNS, and service health |
 | `logs [service]` | Tail logs (all services or one) |
 | `shell` | Open `psql` as `POSTGRES_USER` |
 | `backup` | Manual `pg_dump` to gzip file |
@@ -246,31 +247,83 @@ Prompts for confirmation before overwriting the target database.
 
 ## Traefik Integration
 
-This stack assumes Traefik is already running on the host and connected to an external Docker network named **`traefik_proxy`**. The `deploy.sh up` command creates this network if it does not exist.
+This stack assumes Traefik is already running on the host. On `./deploy.sh up`, the script:
+
+1. Creates the shared Docker network (`TRAEFIK_NETWORK`, default `traefik_proxy`)
+2. Auto-connects any running Traefik container to that network
+3. Registers routers with unique `pgstack-*` names to avoid collisions with other stacks
+
+Configure Traefik-related values in `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRAEFIK_NETWORK` | `traefik_proxy` | External Docker network shared with Traefik |
+| `TRAEFIK_CERT_RESOLVER` | `letsencrypt` | Traefik certificate resolver name |
+| `TRAEFIK_ENTRYPOINT_SECURE` | `websecure` | HTTPS entrypoint |
+| `TRAEFIK_ENTRYPOINT_INSECURE` | `web` | HTTP entrypoint (redirects to HTTPS) |
 
 **pgAdmin** is exposed through Traefik with:
 
 - HTTPS via the `websecure` entrypoint
+- HTTP → HTTPS redirect on the `web` entrypoint
 - TLS certificates from the `letsencrypt` certresolver
 - IP whitelist middleware restricting access to `PGADMIN_ALLOWED_IPS`
+- `traefik.docker.network` set so Traefik reaches the container on the correct network
 
 **Netdata** is exposed through Traefik with:
 
 - HTTPS via the `websecure` entrypoint
+- HTTP → HTTPS redirect on the `web` entrypoint
 - TLS certificates from the `letsencrypt` certresolver
-- BasicAuth middleware (`netdata-auth`) using `NETDATA_BASIC_AUTH`
-- IP whitelist middleware (`netdata-ipwhitelist`) restricting access to `NETDATA_ALLOWED_IPS`
+- BasicAuth middleware (`pgstack-netdata-auth`) using `NETDATA_BASIC_AUTH`
+- IP whitelist middleware (`pgstack-netdata-ipwhitelist`) restricting access to `NETDATA_ALLOWED_IPS`
 
-Both middlewares are applied to the Netdata router.
+If your Traefik instance uses a different network name, set `TRAEFIK_NETWORK` in `.env`.
 
-If your Traefik instance uses a different network name, update the `traefik_proxy` network definition in `docker-compose.yml`:
+## Troubleshooting
 
-```yaml
-networks:
-  traefik_proxy:
-    external: true
-    name: your-traefik-network-name
-```
+### pgAdmin shows "Bad Gateway"
+
+Usually Traefik cannot reach the `pgadmin` container.
+
+1. Run diagnostics:
+   ```bash
+   ./deploy.sh check
+   ```
+2. Ensure Traefik is connected to `TRAEFIK_NETWORK`:
+   ```bash
+   docker network inspect traefik_proxy
+   ```
+   The Traefik container and `pgadmin` must both appear in `Containers`.
+3. Wait up to 90 seconds after first deploy — pgAdmin needs time to initialize.
+4. Check logs:
+   ```bash
+   ./deploy.sh logs pgadmin
+   ```
+
+### Netdata shows "404 page not found" or HTTPS fails
+
+Usually the router is not registered or DNS/certificates are missing.
+
+1. Confirm DNS A records exist for **both** domains in `.env`:
+   - `PGADMIN_DOMAIN` (e.g. `db.hyperfx.io`)
+   - `NETDATA_DOMAIN` (e.g. `metrics.hyperfx.io`)
+2. Run:
+   ```bash
+   ./deploy.sh check
+   ./deploy.sh up
+   ```
+3. Verify Traefik picked up labels:
+   ```bash
+   docker inspect pgadmin --format '{{json .Config.Labels}}' | jq .
+   docker inspect netdata --format '{{json .Config.Labels}}' | jq .
+   ```
+4. Check Traefik logs for ACME/certificate errors.
+5. Access via HTTPS (not HTTP): `https://metrics.yourdomain.com`
+
+### Image pull errors (`bitnami/pgbouncer`)
+
+Bitnami removed free images from Docker Hub. This stack uses `neondatabase/pgbouncer` instead.
 
 ## Security Notes
 
