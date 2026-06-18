@@ -17,9 +17,17 @@ role_exists "$USER" || { echo "ERROR: user '${USER}' not found." >&2; exit 1; }
   echo "WARNING: resetting server admin password. Update .env too."
 }
 
-PW="$(sql_escape "$(prompt_password "$USER")")"
+PW="$(prompt_password "$USER")"
+set_role_password "$USER" "$PW"
 
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
-  -c "ALTER ROLE ${USER} WITH PASSWORD '${PW}';"
-
-echo "OK password updated for ${USER}"
+VERIFY_DB="$(databases_for_role "$USER" | head -n1)"
+if [[ -n "$VERIFY_DB" ]]; then
+  if verify_role_login "$USER" "$PW" "$VERIFY_DB"; then
+    echo "OK password updated for ${USER} (login verified on ${VERIFY_DB})"
+  else
+    echo "ERROR: password updated but login verification failed on '${VERIFY_DB}'." >&2
+    exit 1
+  fi
+else
+  echo "OK password updated for ${USER}"
+fi

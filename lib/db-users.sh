@@ -33,17 +33,38 @@ db_owner() {
     "SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${db}'"
 }
 
+role_password_literal() {
+  local pw="$1" b64
+  b64="$(printf '%s' "$pw" | base64 | tr -d '\n')"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -tAc \
+    "SELECT quote_literal(convert_from(decode('${b64}', 'base64'), 'UTF8'));"
+}
+
 ensure_role_login() {
   local role="$1" pw="$2" extra="${3:-}"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
-DO \$\$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN
-    CREATE ROLE ${role} WITH LOGIN PASSWORD '${pw}' ${extra};
-  ELSE
-    ALTER ROLE ${role} WITH LOGIN PASSWORD '${pw}' ${extra};
-  END IF;
-END \$\$;
-SQL
+  local pw_lit op
+  pw_lit="$(role_password_literal "$pw")"
+  if role_exists "$role"; then
+    op="ALTER ROLE"
+  else
+    op="CREATE ROLE"
+  fi
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
+    -c "${op} \"${role}\" WITH LOGIN PASSWORD ${pw_lit} ${extra};"
+}
+
+set_role_password() {
+  local role="$1" pw="$2"
+  local pw_lit
+  pw_lit="$(role_password_literal "$pw")"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
+    -c "ALTER ROLE \"${role}\" WITH PASSWORD ${pw_lit};"
+}
+
+verify_role_login() {
+  local user="$1" pw="$2" db="$3"
+  docker compose exec -T -e PGPASSWORD="$pw" postgres \
+    psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1
 }
 
 isolate_to_db() {
@@ -265,6 +286,13 @@ add_project_user() {
       grant_db_admin "$db" "$user"
       ;;
   esac
+
+  if ! verify_role_login "$user" "$pw" "$db"; then
+    echo "ERROR: user '${user}' was configured but login verification failed." >&2
+    echo "The password stored in PostgreSQL does not match what you entered." >&2
+    echo "Fix: ./scripts/users/reset-password.sh ${user}" >&2
+    return 1
+  fi
 }
 
 print_connection_string() {
@@ -298,7 +326,7 @@ print_db_summary() {
 
 prompt_add_user_interactive() {
   local db="$1"
-  local access user pw pw_esc choice
+  local access user pw choice
 
   echo ""
   echo "Access types:"
@@ -322,8 +350,7 @@ prompt_add_user_interactive() {
   [[ -n "$user" ]] || return 1
 
   pw="$(prompt_password "$user")"
-  pw_esc="$(sql_escape "$pw")"
-  add_project_user "$db" "$access" "$user" "$pw_esc"
+  add_project_user "$db" "$access" "$user" "$pw"
   echo ""
   echo "OK — ${access} user '${user}' added"
   print_connection_string "$user" "$db"
