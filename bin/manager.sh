@@ -312,6 +312,7 @@ submenu_backups() {
 
 manager_prompt_password() {
   local prompt="${1:-App password (from DATABASE_URL): }"
+  unset PGSTACK_PASSWORD
   read -r -s -p "$prompt" PGSTACK_PASSWORD
   echo
   export PGSTACK_PASSWORD

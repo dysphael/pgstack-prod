@@ -124,6 +124,11 @@ confirm_project_user() {
 
 resolve_app_password() {
   local role="$1"
+  # Manager UI always prompts — ignore PGSTACK_PASSWORD from the shell.
+  if [[ -n "${PGSTACK_UI:-}" ]]; then
+    prompt_password "$role"
+    return 0
+  fi
   if [[ -n "${PGSTACK_PASSWORD:-}" ]]; then
     printf '%s' "$PGSTACK_PASSWORD"
     return 0
@@ -301,12 +306,32 @@ grant_owner_access() {
   local db="$1" user="$2"
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
 GRANT ALL ON SCHEMA app TO ${user};
+GRANT ALL ON ALL TABLES IN SCHEMA app TO ${user};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA app TO ${user};
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA app TO ${user};
 ALTER DEFAULT PRIVILEGES FOR ROLE ${user} IN SCHEMA app
   GRANT ALL ON TABLES TO ${user};
 ALTER DEFAULT PRIVILEGES FOR ROLE ${user} IN SCHEMA app
   GRANT ALL ON SEQUENCES TO ${user};
 ALTER ROLE ${user} SET search_path = app;
 ALTER SCHEMA app OWNER TO ${user};
+
+DO \$\$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'app'
+  LOOP
+    EXECUTE format('ALTER TABLE app.%I OWNER TO %I', r.tablename, '${user}');
+  END LOOP;
+  FOR r IN
+    SELECT c.relname AS seq
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'app' AND c.relkind = 'S'
+  LOOP
+    EXECUTE format('ALTER SEQUENCE app.%I OWNER TO %I', r.seq, '${user}');
+  END LOOP;
+END \$\$;
 SQL
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
     -c "ALTER DATABASE ${db} OWNER TO ${user};"
