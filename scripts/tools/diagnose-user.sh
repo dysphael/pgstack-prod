@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/tools/diagnose-user.sh <username> <database>
-#   PGSTACK_PASSWORD='...' ./scripts/tools/diagnose-user.sh hyperfx_django hyperfx
+#   PGSTACK_PASSWORD='...' ./scripts/tools/diagnose-user.sh myapp_api myapp
 
 set -euo pipefail
 source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"

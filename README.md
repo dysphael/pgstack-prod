@@ -188,14 +188,14 @@ docker compose up -d
 
 # Create DB + app user (password = same as DATABASE_URL in Django/.env)
 PGSTACK_PASSWORD='your-app-password' \
-  ./scripts/setup/bootstrap-app.sh hyperfx hyperfx_django
+  ./scripts/setup/bootstrap-app.sh myapp myapp_api
 
 # Verify remote-style login
 PGSTACK_PASSWORD='your-app-password' \
-  ./scripts/tools/test-conn.sh hyperfx_django hyperfx db.blockway.ai 5432
+  ./scripts/tools/test-conn.sh myapp_api myapp db.yourdomain.com 5432
 ```
 
-> After wiping `data/postgres/`, **all roles and databases are gone**. The app user (`hyperfx_django`) must be recreated. `POSTGRES_USER` in `.env` is only the server admin (`blockway`), not your Django user.
+> After wiping `data/postgres/`, **all roles and databases are gone**. The app user (`myapp_api`) must be recreated. `POSTGRES_USER` in `.env` is only the server admin, not your application user.
 
 **Migrate from old Docker volume** (`pgstack-prod_pgdata`):
 

@@ -22,11 +22,11 @@ A senha do app deve ser **exatamente** a do `DATABASE_URL` no `.env` do Django (
 
 **Manager → Apps → Setup app**
 
-| Campo | Exemplo hyperfx |
-|-------|-----------------|
-| Database | `hyperfx` |
-| App user | `hyperfx_django` |
-| Label | `HyperFX Stake` (opcional) |
+| Campo | Exemplo |
+|-------|---------|
+| Database | `myapp` |
+| App user | `myapp_api` |
+| Label | `My App` (opcional) |
 | Password | senha do `DATABASE_URL` |
 
 O script cria o banco, schema `app`, usuário owner, isola acesso e **verifica login** antes de mostrar OK.
@@ -42,12 +42,12 @@ python manage.py check
 
 ## 2. Rotina — Backup
 
-**Manager → Apps → Backup app** → escolha `hyperfx`
+**Manager → Apps → Backup app** → escolha `myapp`
 
 Gera dois arquivos em `data/backups/`:
 
-- `backup_hyperfx_YYYYMMDD_HHMMSS.sql.gz` — dados
-- `backup_hyperfx_YYYYMMDD_HHMMSS.manifest.json` — usuários e permissões
+- `backup_myapp_YYYYMMDD_HHMMSS.sql.gz` — dados
+- `backup_myapp_YYYYMMDD_HHMMSS.manifest.json` — usuários e permissões
 
 ---
 
@@ -55,7 +55,7 @@ Gera dois arquivos em `data/backups/`:
 
 **Manager → Apps → Restore app**
 
-1. Escolha o app (`hyperfx`)
+1. Escolha o app (`myapp`)
 2. Escolha o número do backup
 3. Digite a senha do `DATABASE_URL`
 4. Confirme com `YES`
@@ -102,15 +102,15 @@ Use isso **antes** de culpar o Django.
 ```bash
 export PGSTACK_PASSWORD='senha-do-DATABASE_URL'
 
-./scripts/app.sh setup   hyperfx hyperfx_django "HyperFX Stake"
-./scripts/app.sh backup  hyperfx
-./scripts/app.sh verify  hyperfx
+./scripts/app.sh setup   myapp myapp_api "My App"
+./scripts/app.sh backup  myapp
+./scripts/app.sh verify  myapp
 
 # Restore após drop ou corrupção
-PGSTACK_YES=1 ./scripts/app.sh restore data/backups/backup_hyperfx_XXXXXX.sql.gz
+PGSTACK_YES=1 ./scripts/app.sh restore data/backups/backup_myapp_XXXXXX.sql.gz
 
 # Drop com backup automático
-PGSTACK_YES=1 ./scripts/app.sh drop hyperfx --backup-first
+PGSTACK_YES=1 ./scripts/app.sh drop myapp --backup-first
 ```
 
 ---
@@ -121,9 +121,9 @@ Apps ficam em `data/apps/registry.json` (sem senha):
 
 ```json
 {
-  "hyperfx": {
-    "user": "hyperfx_django",
-    "label": "HyperFX Stake"
+  "myapp": {
+    "user": "myapp_api",
+    "label": "My App"
   }
 }
 ```
@@ -140,11 +140,11 @@ Roda: setup → backup → drop → restore → verify e limpa sozinho.
 
 ---
 
-## Recuperação rápida (hyperfx)
+## Recuperação rápida
 
 ```
-Manager → Apps → Restore → hyperfx → último backup → senha → YES
-Manager → Apps → Verify → hyperfx
+Manager → Apps → Restore → myapp → último backup → senha → YES
+Manager → Apps → Verify → myapp
 ```
 
 No Mac: `python manage.py check`

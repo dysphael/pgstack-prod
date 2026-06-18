@@ -3,7 +3,7 @@
 #
 # Usage:
 #   PGSTACK_PASSWORD='secret' ./scripts/tools/test-conn.sh <user> <database> [host] [port]
-#   ./scripts/tools/test-conn.sh hyperfx_django hyperfx db.blockway.ai 5432
+#   ./scripts/tools/test-conn.sh myapp_api myapp db.yourdomain.com 5432
 
 set -euo pipefail
 source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"

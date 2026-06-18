@@ -360,17 +360,17 @@ action_app_list() {
 }
 
 action_app_setup() {
-  ui_read_choice "Database name (e.g. hyperfx)"
+  ui_read_choice "Database name (e.g. myapp)"
   local db="${UI_CHOICE:-}"
   [[ -n "$db" ]] || { ui_cancelled; return 0; }
   valid_db_name "$db" || { ui_err "Invalid database name."; return 0; }
 
-  ui_read_choice "App user (e.g. hyperfx_django)"
+  ui_read_choice "App user (e.g. myapp_api)"
   local user="${UI_CHOICE:-}"
   [[ -n "$user" ]] || { ui_cancelled; return 0; }
   valid_db_name "$user" || { ui_err "Invalid username."; return 0; }
 
-  ui_read_choice "Label (optional, e.g. HyperFX Stake)"
+  ui_read_choice "Label (optional, e.g. My App)"
   local label="${UI_CHOICE:-}"
 
   manager_prompt_password || return 0
