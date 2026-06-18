@@ -83,10 +83,13 @@ ensure_project_schema_if_missing() {
 setup_project_schema() {
   local db="$1" owner="$2"
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+-- Session override: DB/role may have search_path=app before schema exists.
+SET search_path = public, pg_catalog;
 
 CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION ${owner};
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS "pg_trgm" SCHEMA public;
 
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM ${owner};
@@ -339,6 +342,86 @@ interactive_add_users() {
   done
 }
 
+# Login roles with CONNECT on a database (project users only).
+users_for_database() {
+  local db="$1"
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc "
+    SELECT r.rolname
+    FROM pg_roles r
+    WHERE r.rolcanlogin
+      AND NOT r.rolsuper
+      AND r.rolname <> '${POSTGRES_USER}'
+      AND has_database_privilege(r.rolname, '${db}', 'CONNECT')
+    ORDER BY r.rolname;
+  "
+}
+
+# True when role has privileges on only this non-template database.
+role_exclusive_to_db() {
+  local user="$1" db="$2"
+  local dbs count
+  dbs="$(databases_for_role "$user")"
+  count="$(printf '%s\n' "$dbs" | sed '/^$/d' | wc -l | tr -d ' ')"
+  [[ "$count" -eq 1 ]] && printf '%s\n' "$dbs" | grep -qx "$db"
+}
+
+reassign_db_owner_to_admin() {
+  local db="$1"
+  local owner
+  owner="$(db_owner "$db")"
+  [[ -n "$owner" && "$owner" != "$POSTGRES_USER" ]] || return 0
+  echo "Reassigning database owner from '${owner}' to '${POSTGRES_USER}'..."
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
+    -c "ALTER DATABASE ${db} OWNER TO ${POSTGRES_USER};"
+}
+
+terminate_db_connections() {
+  local db="$1"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE datname = '${db}' AND pid <> pg_backend_pid();
+SQL
+}
+
+revoke_user_from_database() {
+  local db="$1" user="$2"
+  revoke_app_grants "$db" "$user" || true
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=0 \
+    -c "DROP OWNED BY ${user};" || true
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=0 -c \
+    "REVOKE ALL PRIVILEGES ON DATABASE ${db} FROM ${user};
+     REVOKE CONNECT ON DATABASE ${db} FROM ${user};" || true
+}
+
+drop_role() {
+  local user="$1"
+  role_exists "$user" || return 0
+  teardown_user_grants "$user"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
+    -c "DROP ROLE ${user};"
+}
+
+prepare_database_drop() {
+  local db="$1"
+  local user others
+
+  terminate_db_connections "$db"
+  reassign_db_owner_to_admin "$db"
+
+  while IFS= read -r user; do
+    [[ -z "$user" ]] && continue
+    if role_exclusive_to_db "$user" "$db"; then
+      echo "Cleaning up user '${user}' (exclusive to '${db}')..."
+      revoke_user_from_database "$db" "$user"
+    else
+      others="$(databases_for_role "$user" | grep -vx "$db" | paste -sd ', ' - || true)"
+      echo "Revoking '${user}' from '${db}' (kept — also has: ${others:-other databases})..."
+      revoke_user_from_database "$db" "$user"
+    fi
+  done < <(users_for_database "$db")
+}
+
 # List project databases where a role has CONNECT (or any) privilege.
 databases_for_role() {
   local user="$1"
@@ -354,6 +437,17 @@ databases_for_role() {
   "
 }
 
+revoke_app_grants() {
+  local db="$1" user="$2"
+  schema_app_exists "$db" || return 0
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=1 <<SQL
+REVOKE ALL ON SCHEMA app FROM ${user};
+REVOKE ALL ON ALL TABLES IN SCHEMA app FROM ${user};
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA app FROM ${user};
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA app FROM ${user};
+SQL
+}
+
 # Revoke grants and drop objects owned by role in every database, then global.
 teardown_user_grants() {
   local user="$1"
@@ -363,13 +457,9 @@ teardown_user_grants() {
 
   while IFS= read -r db; do
     [[ -z "$db" ]] && continue
-    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=0 <<SQL || true
-REVOKE ALL ON SCHEMA app FROM ${user};
-REVOKE ALL ON ALL TABLES IN SCHEMA app FROM ${user};
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA app FROM ${user};
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA app FROM ${user};
-DROP OWNED BY ${user};
-SQL
+    revoke_app_grants "$db" "$user" || true
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=0 \
+      -c "DROP OWNED BY ${user};" || true
   done < <(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc \
     "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;")
 
