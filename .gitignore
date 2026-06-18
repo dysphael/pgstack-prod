@@ -2,5 +2,5 @@
 .envrc
 .venv/
 venv/
-/backups/
-/logs/
+/data/*
+!/data/README.md

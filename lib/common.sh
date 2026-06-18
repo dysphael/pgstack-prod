@@ -9,6 +9,19 @@ set_env() {
   fi
   # shellcheck disable=SC1091
   set -a && source .env && set +a
+  apply_data_paths
+}
+
+# Single root for all persistent files (postgres data, backups, logs).
+apply_data_paths() {
+  DATA_DIR="${DATA_DIR:-./data}"
+  BACKUP_DIR="${BACKUP_DIR:-${DATA_DIR}/backups}"
+  LOG_DIR="${LOG_DIR:-${DATA_DIR}/logs/postgres}"
+  export DATA_DIR BACKUP_DIR LOG_DIR
+}
+
+data_dir() {
+  abs_path "${DATA_DIR:-./data}"
 }
 
 postgres_ready() {
@@ -28,6 +41,7 @@ auth_mismatch_hint() {
   echo "  - Put back the original POSTGRES_USER in .env, or" >&2
   echo "  - Reset data: docker compose down && docker volume rm \$(docker volume ls -q | grep pgdata)" >&2
   echo "    then docker compose up -d (destroys all databases)" >&2
+  echo "  - Or remove data folder: docker compose down && rm -rf ./data/postgres" >&2
 }
 
 require_postgres() {

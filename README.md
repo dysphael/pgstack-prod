@@ -10,9 +10,12 @@ Production PostgreSQL 16 with persistent storage and DNS-based access for applic
 ```bash
 cp .env.example .env
 nano .env                    # set POSTGRES_PASSWORD and POSTGRES_HOST
-docker compose up -d         # creates folders and starts PostgreSQL
+mkdir -p data/postgres data/backups data/logs/postgres
+docker compose up -d         # starts PostgreSQL (persists under data/)
 ./bin/manager.sh              # interactive manager (or ./manager.sh)
 ```
+
+All persistent files live under **`data/`** — database files, backups, and logs in one place. See [data/README.md](data/README.md).
 
 The manager is a colorized terminal UI (72-column layout) with a live system dashboard, boxed menus, breadcrumbs, and keyboard shortcuts.
 
@@ -32,8 +35,8 @@ The manager is a colorized terminal UI (72-column layout) with a live system das
 | Backups        3 files (12M)                                         |
 | Latest         2026-06-18 14:30:00                                   |
 | Docker         postgres: running                                     |
-| Backup dir     backups/                                              |
-| Logs dir       logs/postgres/                                        |
+| Backup dir     data/backups/                                         |
+| Logs dir       data/logs/postgres/                                   |
 +----------------------------------------------------------------------+
 
 +-- Menu --------------------------------------------------------------+
@@ -116,16 +119,27 @@ postgresql://myapp_app:PASSWORD@db.yourdomain.com:5432/myapp
 
 ## Logs (persistent files)
 
-PostgreSQL saves daily log files to `logs/postgres/`:
+PostgreSQL saves daily log files to `data/logs/postgres/`:
 
 ```bash
-ls logs/postgres/
-tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log
+ls data/logs/postgres/
+tail -f data/logs/postgres/postgresql-$(date +%Y-%m-%d).log
 ```
+
+The `data/` folder is created on first `docker compose up` (or run `mkdir -p` above).
 
 Logged events: schema changes (DDL) and slow queries (> 500 ms).
 
-Folders `logs/postgres/` and `backups/` are created automatically on `docker compose up`.
+## Persistent data folder
+
+```text
+data/
+├── postgres/          # PostgreSQL database files (bind mount)
+├── backups/           # .sql.gz backups
+└── logs/postgres/     # daily log files
+```
+
+Copy the whole `data/` folder to migrate servers or for off-site backup.
 
 ## Backup & restore (summary)
 
@@ -162,15 +176,26 @@ See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough
 
 ### `role "X" does not exist` / login failed for admin user
 
-`POSTGRES_USER` and `POSTGRES_PASSWORD` are applied **only on first boot** (empty Docker volume). Changing `.env` later does not rename the admin user.
+`POSTGRES_USER` and `POSTGRES_PASSWORD` are applied **only on first boot** (empty `data/postgres/`). Changing `.env` later does not rename the admin user.
 
 **Fresh install (no data to keep):**
 
 ```bash
 docker compose down
-docker volume rm pgstack-prod_pgdata    # name may vary: docker volume ls | grep pgdata
+rm -rf ./data/postgres
 docker compose up -d
 ./scripts/overview/status.sh
+```
+
+**Migrate from old Docker volume** (`pgstack-prod_pgdata`):
+
+```bash
+docker compose down
+mkdir -p data/postgres
+docker run --rm -v pgstack-prod_pgdata:/from -v "$(pwd)/data/postgres:/to" alpine \
+  sh -c 'cp -a /from/. /to/'
+# Update .env: DATA_DIR=./data, BACKUP_DIR=./data/backups, LOG_DIR=./data/logs/postgres
+docker compose up -d
 ```
 
 **Already has databases:** put the **original** `POSTGRES_USER` back in `.env` (the one used on first `docker compose up`), then restart:
@@ -183,8 +208,9 @@ docker compose restart postgres
 
 | Feature | Implementation |
 |---------|----------------|
-| Persistent data | Docker volume `pgdata` |
-| Persistent logs | `logs/postgres/postgresql-YYYY-MM-DD.log` |
+| Persistent data | `data/postgres/` (bind mount) |
+| Persistent logs | `data/logs/postgres/postgresql-YYYY-MM-DD.log` |
+| Backups | `data/backups/` |
 | Integrity checks | `data-checksums` on new installs |
 | Tuning | `postgres/conf/postgresql.conf` (defaults for 2 GB RAM) |
 | Extensions | `uuid-ossp`, `pg_stat_statements` (first boot only) |
@@ -212,8 +238,9 @@ Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose rest
 | `POSTGRES_HOST` | DNS hostname for connection strings (not used by Docker) |
 | `POSTGRES_PORT_PUBLISH` | `5432:5432` or `127.0.0.1:5432:5432` |
 | `POSTGRES_MEM_LIMIT` | Container memory cap (e.g. `1536M`) |
-| `BACKUP_DIR` | Backup folder (default `./backups`) |
-| `LOG_DIR` | Log folder (default `./logs/postgres`) |
+| `DATA_DIR` | Root for all persistent files (default `./data`) |
+| `BACKUP_DIR` | Backup folder (default `./data/backups`) |
+| `LOG_DIR` | Log folder (default `./data/logs/postgres`) |
 
 ## Operations
 
@@ -249,8 +276,10 @@ pgstack-prod/
 ├── docs/
 │   ├── SCRIPTS.md
 │   └── BACKUP.md
-├── logs/postgres/
-├── backups/
+├── data/                       # all persistent files (see data/README.md)
+│   ├── postgres/
+│   ├── backups/
+│   └── logs/postgres/
 └── postgres/
     ├── entrypoint-wrapper.sh
     ├── conf/postgresql.conf

@@ -11,7 +11,7 @@ echo ""
 echo "Host:     ${POSTGRES_HOST:-not set}"
 echo "Admin:    ${POSTGRES_USER}"
 echo "Backups:  $(backup_dir)"
-echo "Logs:     $(abs_path "${LOG_DIR:-./logs/postgres}")"
+echo "Logs:     $(abs_path "${LOG_DIR:-./data/logs/postgres}")"
 echo ""
 
 echo "=== Docker ==="

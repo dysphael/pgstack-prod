@@ -6,7 +6,6 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"
 set_env
 require_postgres
 
-BACKUP_DIR="${BACKUP_DIR:-./backups}"
 mkdir -p "$BACKUP_DIR"
 TARGET="${1:-}"
 TS="$(date +%Y%m%d_%H%M%S)"

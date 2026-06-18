@@ -8,7 +8,7 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"
 set_env
 
-LOG_DIR="$(abs_path "${LOG_DIR:-./logs/postgres}")"
+LOG_DIR="$(abs_path "${LOG_DIR:-./data/logs/postgres}")"
 mkdir -p "$LOG_DIR"
 
 case "${1:-}" in

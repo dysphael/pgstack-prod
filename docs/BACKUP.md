@@ -8,7 +8,7 @@ A step-by-step guide for beginners. No prior database experience required.
 
 A **backup** is a copy of your database saved to a file. If something goes wrong (server crash, accidental deletion, bad update), you can **restore** the backup and get your data back.
 
-Backups are stored in the `backups/` folder as `.sql.gz` files (compressed text files).
+Backups are stored in `data/backups/` as `.sql.gz` files (compressed text files).
 
 ---
 
@@ -50,7 +50,7 @@ Replace `myapp` with your real database name:
 **What happens:**
 - The script connects to PostgreSQL inside Docker
 - Exports all tables and data from `myapp`
-- Saves a compressed file like: `backups/backup_myapp_20260115_030000.sql.gz`
+- Saves a compressed file like: `data/data/backups/backup_myapp_20260115_030000.sql.gz`
 
 ### Backup all project databases
 
@@ -67,7 +67,7 @@ Replace `myapp` with your real database name:
 Example output:
 
 ```text
-backups/backup_myapp_20260115_030000.sql.gz   2.4M
+data/backups/backup_myapp_20260115_030000.sql.gz   2.4M
 ```
 
 ---
@@ -85,13 +85,13 @@ backups/backup_myapp_20260115_030000.sql.gz   2.4M
 Copy the full filename, for example:
 
 ```text
-backups/backup_myapp_20260115_030000.sql.gz
+data/backups/backup_myapp_20260115_030000.sql.gz
 ```
 
 ### Step 2 — run the restore
 
 ```bash
-./scripts/backups/restore.sh backups/backup_myapp_20260115_030000.sql.gz myapp
+./scripts/backups/restore.sh data/backups/backup_myapp_20260115_030000.sql.gz myapp
 ```
 
 Replace:
@@ -131,7 +131,7 @@ crontab -e
 ### Step 2 — add this line at the bottom
 
 ```cron
-0 3 * * * cd /root/pgstack-prod && ./scripts/backups/backup.sh >> ./logs/backup.log 2>&1
+0 3 * * * cd /root/pgstack-prod && ./scripts/backups/backup.sh >> ./data/logs/backup.log 2>&1
 ```
 
 **Change `/root/pgstack-prod`** if your project is in a different folder.
@@ -154,7 +154,7 @@ crontab -l
 | `0 3 * * *` | Every day at 03:00 |
 | `cd /root/pgstack-prod` | Go to project folder |
 | `./scripts/backups/backup.sh` | Run backup |
-| `>> ./logs/backup.log` | Save output to a log file |
+| `>> ./data/logs/backup.log` | Save output to a log file |
 
 ---
 
@@ -165,7 +165,7 @@ Backups on the same server as the database are not enough if the server dies. Co
 ### Download to your Mac/PC (from your local machine)
 
 ```bash
-scp root@YOUR_SERVER_IP:~/pgstack-prod/backups/backup_myapp_*.sql.gz ./Downloads/
+scp root@YOUR_SERVER_IP:~/pgstack-prod/data/backups/backup_myapp_*.sql.gz ./Downloads/
 ```
 
 Replace `YOUR_SERVER_IP` with your VPS IP address.
@@ -177,14 +177,14 @@ Replace `YOUR_SERVER_IP` with your VPS IP address.
 PostgreSQL writes daily log files to:
 
 ```text
-logs/postgres/postgresql-YYYY-MM-DD.log
+data/logs/postgres/postgresql-YYYY-MM-DD.log
 ```
 
 ### View today's log
 
 ```bash
-ls -la logs/postgres/
-tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log
+ls -la data/logs/postgres/
+tail -f data/logs/postgres/postgresql-$(date +%Y-%m-%d).log
 ```
 
 ### What is logged
@@ -202,7 +202,7 @@ tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log
 docker compose logs -f postgres
 ```
 
-These are separate from the files in `logs/postgres/` and rotate automatically.
+These are separate from the files in `data/logs/postgres/` and rotate automatically.
 
 ---
 
@@ -244,8 +244,8 @@ docker compose logs postgres
 | Backup one DB | `./scripts/backups/backup.sh myapp` |
 | Backup all DBs | `./scripts/backups/backup.sh` |
 | List backups | `./scripts/backups/list-backups.sh` |
-| Restore | `./scripts/backups/restore.sh backups/FILE.sql.gz myapp` |
-| View log files | `tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log` |
+| Restore | `./scripts/backups/restore.sh data/backups/FILE.sql.gz myapp` |
+| View log files | `tail -f data/logs/postgres/postgresql-$(date +%Y-%m-%d).log` |
 | List tables | `docker compose exec postgres psql -U appuser -d myapp -c "\dt"` |
 
 ---

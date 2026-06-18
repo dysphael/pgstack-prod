@@ -135,7 +135,10 @@ dashboard_live() {
   ui_box_row "Docker" "postgres: ${docker_state}"
 
   backup_path="$(backup_dir | sed "s|$ROOT/||")"
-  log_path="$(abs_path "${LOG_DIR:-./logs/postgres}" | sed "s|$ROOT/||")"
+  log_path="$(abs_path "${LOG_DIR:-./data/logs/postgres}" | sed "s|$ROOT/||")"
+  local data_path
+  data_path="$(data_dir 2>/dev/null | sed "s|$ROOT/||")" || data_path="data"
+  ui_box_row "Data root" "${data_path}"
   ui_box_row "Backup dir" "${backup_path}"
   ui_box_row "Logs dir" "${log_path}"
 
