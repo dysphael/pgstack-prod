@@ -17,7 +17,7 @@ services:
       - "${POSTGRES_PORT_PUBLISH:-5432:5432}"
     volumes:
       - ${DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
-      - ${LOG_DIR:-./data/logs/postgres}:/var/log/postgresql
+      - ${DATA_DIR:-./data}/logs/postgres:/var/log/postgresql
       - ./postgres/entrypoint-wrapper.sh:/usr/local/bin/entrypoint-wrapper.sh:ro
       - ./postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./postgres/init:/docker-entrypoint-initdb.d:ro

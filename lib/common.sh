@@ -1,6 +1,52 @@
 #!/usr/bin/env bash
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Single root for all persistent files (postgres data, backups, logs).
+# BACKUP_DIR and LOG_DIR are always under DATA_DIR — never set them separately in .env.
+apply_data_paths() {
+  DATA_DIR="${DATA_DIR:-./data}"
+  BACKUP_DIR="${DATA_DIR}/backups"
+  LOG_DIR="${DATA_DIR}/logs/postgres"
+  export DATA_DIR BACKUP_DIR LOG_DIR
+}
+
+ensure_data_layout() {
+  local d_backups d_logs d_pg
+  d_pg="$(abs_path "${DATA_DIR}/postgres")"
+  d_backups="$(abs_path "${BACKUP_DIR}")"
+  d_logs="$(abs_path "${LOG_DIR}")"
+  mkdir -p "$d_pg" "$d_backups" "$d_logs"
+  migrate_legacy_data_paths "$d_backups" "$d_logs"
+}
+
+# Move old ./backups and ./logs/postgres into data/ if present.
+migrate_legacy_data_paths() {
+  local d_backups="$1" d_logs="$2"
+  local f
+
+  if [[ -d "$ROOT/backups" ]] && [[ "$ROOT/backups" != "$d_backups" ]]; then
+    for f in "$ROOT/backups"/*; do
+      [[ -e "$f" ]] || continue
+      mv "$f" "$d_backups/" 2>/dev/null || true
+    done
+    rmdir "$ROOT/backups" 2>/dev/null || true
+    echo "Moved legacy backups/ → ${BACKUP_DIR}/"
+  fi
+
+  if [[ -d "$ROOT/logs/postgres" ]] && [[ "$ROOT/logs/postgres" != "$d_logs" ]]; then
+    for f in "$ROOT/logs/postgres"/*; do
+      [[ -e "$f" ]] || continue
+      mv "$f" "$d_logs/" 2>/dev/null || true
+    done
+    rm -rf "$ROOT/logs/postgres" 2>/dev/null || true
+    echo "Moved legacy logs/postgres/ → ${LOG_DIR}/"
+  fi
+
+  if [[ -d "$ROOT/logs" ]] && [[ -z "$(ls -A "$ROOT/logs" 2>/dev/null)" ]]; then
+    rmdir "$ROOT/logs" 2>/dev/null || true
+  fi
+}
+
 set_env() {
   cd "$ROOT"
   if [[ ! -f .env ]]; then
@@ -10,14 +56,7 @@ set_env() {
   # shellcheck disable=SC1091
   set -a && source .env && set +a
   apply_data_paths
-}
-
-# Single root for all persistent files (postgres data, backups, logs).
-apply_data_paths() {
-  DATA_DIR="${DATA_DIR:-./data}"
-  BACKUP_DIR="${BACKUP_DIR:-${DATA_DIR}/backups}"
-  LOG_DIR="${LOG_DIR:-${DATA_DIR}/logs/postgres}"
-  export DATA_DIR BACKUP_DIR LOG_DIR
+  ensure_data_layout
 }
 
 data_dir() {

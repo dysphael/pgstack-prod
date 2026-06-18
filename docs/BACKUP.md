@@ -50,7 +50,7 @@ Replace `myapp` with your real database name:
 **What happens:**
 - The script connects to PostgreSQL inside Docker
 - Exports all tables and data from `myapp`
-- Saves a compressed file like: `data/data/backups/backup_myapp_20260115_030000.sql.gz`
+- Saves a compressed file like: `data/backups/backup_myapp_20260115_030000.sql.gz`
 
 ### Backup all project databases
 

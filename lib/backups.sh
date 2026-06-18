@@ -2,7 +2,7 @@
 # Shared backup listing helpers.
 
 backup_dir() {
-  abs_path "${BACKUP_DIR:-./data/backups}"
+  abs_path "${BACKUP_DIR}"
 }
 
 backup_db_from_filename() {

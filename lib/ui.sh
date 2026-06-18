@@ -223,8 +223,8 @@ ui_help_screen() {
   echo ""
   ui_box "Paths" \
     "Scripts     scripts/{overview,databases,users,backups,tools}/" \
-    "Backups     BACKUP_DIR in .env" \
-    "Logs        LOG_DIR in .env"
+    "Backups     data/backups/" \
+    "Logs        data/logs/postgres/"
   echo ""
   ui_pause
 }

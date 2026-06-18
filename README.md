@@ -148,7 +148,7 @@ Copy the whole `data/` folder to migrate servers or for off-site backup.
 | Backup one database | `./scripts/backups/backup.sh myapp` |
 | Backup all databases | `./scripts/backups/backup.sh` |
 | List backup files | `./scripts/backups/list-backups.sh` |
-| Restore a backup | `./scripts/backups/restore.sh backups/backup_myapp_DATE.sql.gz myapp` |
+| Restore a backup | `./scripts/backups/restore.sh data/backups/backup_myapp_DATE.sql.gz myapp` |
 | Health check | `./scripts/overview/status.sh` |
 
 See **[docs/SCRIPTS.md](docs/SCRIPTS.md)** for what each script does.  
@@ -248,9 +248,7 @@ Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose rest
 | `POSTGRES_HOST` | DNS hostname for connection strings (not used by Docker) |
 | `POSTGRES_PORT_PUBLISH` | `5432:5432` or `127.0.0.1:5432:5432` |
 | `POSTGRES_MEM_LIMIT` | Container memory cap (e.g. `1536M`) |
-| `DATA_DIR` | Root for all persistent files (default `./data`) |
-| `BACKUP_DIR` | Backup folder (default `./data/backups`) |
-| `LOG_DIR` | Log folder (default `./data/logs/postgres`) |
+| `DATA_DIR` | Root for all persistent files (default `./data`) — postgres, backups, logs |
 
 ## Operations
 
