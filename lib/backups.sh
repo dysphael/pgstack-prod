@@ -43,7 +43,7 @@ print_backup_table() {
 
   if [[ ${#BACKUP_FILES[@]} -eq 0 ]]; then
     echo "No backups in ${dir}"
-    return 1
+    return 0
   fi
 
   printf '%-3s %-12s %-6s %-20s %s\n' "#" "DB" "Size" "Date" "Path"

@@ -39,7 +39,13 @@ require_db_action() {
 
 # Usage: run <category> <script> [args...]
 run() {
-  "${SCRIPTS}/$1/$2" "${@:3}"
+  local script="${SCRIPTS}/$1/$2"
+  [[ -f "$script" ]] || {
+    echo "ERROR: script not found: ${script}" >&2
+    echo "Run: git pull  (scripts/backups/ may be missing on server)" >&2
+    return 1
+  }
+  "$script" "${@:3}"
 }
 
 submenu_overview() {
