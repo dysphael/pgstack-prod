@@ -319,3 +319,48 @@ interactive_add_users() {
     echo ""
   done
 }
+
+# List project databases where a role has CONNECT (or any) privilege.
+databases_for_role() {
+  local user="$1"
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc "
+    SELECT d.datname
+    FROM pg_database d
+    WHERE d.datistemplate = false
+      AND (
+        has_database_privilege('${user}', d.datname, 'CONNECT')
+        OR has_database_privilege('${user}', d.datname, 'CREATE')
+      )
+    ORDER BY d.datname;
+  "
+}
+
+# Revoke grants and drop objects owned by role in every database, then global.
+teardown_user_grants() {
+  local user="$1"
+  local db
+
+  echo "Revoking privileges for '${user}'..."
+
+  while IFS= read -r db; do
+    [[ -z "$db" ]] && continue
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=0 <<SQL || true
+REVOKE ALL ON SCHEMA app FROM ${user};
+REVOKE ALL ON ALL TABLES IN SCHEMA app FROM ${user};
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA app FROM ${user};
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA app FROM ${user};
+DROP OWNED BY ${user};
+SQL
+  done < <(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc \
+    "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;")
+
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=0 -c \
+    "DROP OWNED BY ${user};" || true
+
+  while IFS= read -r db; do
+    [[ -z "$db" ]] && continue
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=0 -c \
+      "REVOKE ALL PRIVILEGES ON DATABASE ${db} FROM ${user};
+       REVOKE CONNECT ON DATABASE ${db} FROM ${user};" || true
+  done < <(databases_for_role "$user")
+}

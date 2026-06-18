@@ -23,9 +23,19 @@ if [[ -n "$OWNER_OF" ]]; then
   exit 1
 fi
 
+DB_ACCESS="$(databases_for_role "$USER")"
+if [[ -n "$DB_ACCESS" ]]; then
+  echo "Databases with access: ${DB_ACCESS//$'\n'/, }"
+else
+  echo "No database CONNECT privileges found (will still clean grants if any)."
+fi
+
+echo ""
 echo "Drop user: ${USER}"
 read -r -p "Type YES to continue: " OK
 [[ "$OK" == "YES" ]] || { echo "Cancelled."; exit 0; }
+
+teardown_user_grants "$USER"
 
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
   -c "DROP ROLE ${USER};"
