@@ -58,9 +58,9 @@ pg_print_table() {
   local db="$1" sql="$2"
   shift 2
   local -a widths=("$@")
-  local data line row=0
+  local data line
   local -a headers=() fields=()
-  local i w
+  local i w data_rows=0 have_header=0
 
   data="$(pg_query_csv "$db" "$sql")" || {
     echo "Query failed."
@@ -77,17 +77,18 @@ pg_print_table() {
     pg_parse_csv_line "$line"
     fields=("${PG_CSV_FIELDS[@]}")
 
-    if (( row == 0 )); then
+    if (( have_header == 0 )); then
       headers=("${fields[@]}")
+      have_header=1
       for i in "${!headers[@]}"; do
         w="${widths[i]:-12}"
         printf '%-*s ' "$w" "$(pg_truncate_field "${headers[i]}" "$w")"
       done
       printf '\n'
-      row=1
       continue
     fi
 
+    data_rows=$((data_rows + 1))
     for i in "${!fields[@]}"; do
       w="${widths[i]:-12}"
       printf '%-*s ' "$w" "$(pg_truncate_field "${fields[i]}" "$w")"
@@ -95,7 +96,7 @@ pg_print_table() {
     printf '\n'
   done <<<"$data"
 
-  if (( row < 2 )); then
+  if (( data_rows == 0 )); then
     echo "(0 rows)"
   fi
 }

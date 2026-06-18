@@ -2,7 +2,7 @@
 # Interactive manager — terminal UI.
 # Usage: ./bin/manager.sh
 
-set -euo pipefail
+set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
@@ -21,10 +21,9 @@ run() {
     ui_dim "Run: git pull"
     return 1
   }
-  # Subshell: script "exit 1" must not kill the manager (set -e).
   (
     PGSTACK_UI=1 PGSTACK_TABLE_WIDTH=$((UI_WIDTH - 4)) "$script" "${@:3}"
-  )
+  ) || true
 }
 
 pause_continue() {
@@ -321,20 +320,20 @@ submenu_tools() {
 
 action_connections() {
   if ui_pick_project_db "Filter by database (0 = cancel, skip = all):"; then
-    run overview connections.sh "$UI_PICK_RESULT"
+    run overview connections.sh "$UI_PICK_RESULT" || true
   else
-    run overview connections.sh
+    run overview connections.sh || true
   fi
 }
 
 action_tables() {
   ui_pick_project_db "Select database:" || { ui_cancelled; return 0; }
-  run overview db-tables.sh "$UI_PICK_RESULT"
+  run overview db-tables.sh "$UI_PICK_RESULT" || true
 }
 
 action_conn_info() {
   ui_pick_project_db "Select database:" || { ui_cancelled; return 0; }
-  run databases conn-info.sh "$UI_PICK_RESULT"
+  run databases conn-info.sh "$UI_PICK_RESULT" || true
 }
 
 action_list_access() {
@@ -343,12 +342,12 @@ action_list_access() {
   read_array DBS list_project_dbs
   if [[ ${#DBS[@]} -gt 0 ]] && ui_pick_list "Filter by database:" "All databases" "${DBS[@]}"; then
     if [[ "$UI_PICK_RESULT" == "All databases" ]]; then
-      run users list-access.sh
+      run users list-access.sh || true
     else
-      run users list-access.sh "$UI_PICK_RESULT"
+      run users list-access.sh "$UI_PICK_RESULT" || true
     fi
   else
-    run users list-access.sh
+    run users list-access.sh || true
   fi
 }
 
@@ -358,12 +357,12 @@ action_create_db() {
   local DB="${UI_CHOICE:-}"
   [[ -n "$DB" ]] || { ui_cancelled; return 0; }
   valid_db_name "$DB" || { ui_err "Invalid name."; return 0; }
-  run databases create-db.sh "$DB"
+  run databases create-db.sh "$DB" || true
 }
 
 action_drop_db() {
   ui_pick_project_db "Select database to drop:" || { ui_cancelled; return 0; }
-  run databases drop-db.sh "$UI_PICK_RESULT"
+  run databases drop-db.sh "$UI_PICK_RESULT" || true
 }
 
 action_add_user() {
@@ -379,7 +378,7 @@ action_add_user() {
   [[ -n "$user" ]] || { ui_cancelled; return 0; }
   valid_db_name "$user" || { ui_err "Invalid username."; return 0; }
 
-  run users add-user.sh "$db" "$access" "$user"
+  run users add-user.sh "$db" "$access" "$user" || true
 }
 
 action_reset_password() {
@@ -387,7 +386,7 @@ action_reset_password() {
   local user="${UI_CHOICE:-}"
   [[ -n "$user" ]] || { ui_cancelled; return 0; }
   valid_db_name "$user" || { ui_err "Invalid username."; return 0; }
-  run users reset-password.sh "$user"
+  run users reset-password.sh "$user" || true
 }
 
 action_drop_user() {
@@ -395,13 +394,13 @@ action_drop_user() {
   local user="${UI_CHOICE:-}"
   [[ -n "$user" ]] || { ui_cancelled; return 0; }
   valid_db_name "$user" || { ui_err "Invalid username."; return 0; }
-  run users drop-user.sh "$user"
+  run users drop-user.sh "$user" || true
 }
 
 action_backup_one() {
   require_db_action || return 0
   ui_pick_project_db "Select database to backup:" || { ui_cancelled; return 0; }
-  run backups backup.sh "$UI_PICK_RESULT"
+  run backups backup.sh "$UI_PICK_RESULT" || true
 }
 
 action_restore() {
@@ -424,20 +423,22 @@ action_restore() {
   [[ -n "$DB" && "$DB" != "?" ]] || { ui_err "Invalid database name."; return 0; }
   valid_db_name "$DB" || { ui_err "Invalid database name."; return 0; }
 
-  run backups restore.sh "$file" "$DB"
+  run backups restore.sh "$file" "$DB" || true
 }
 
 action_psql() {
   if ui_pick_project_db "Select database (0 = postgres):"; then
-    run tools psql.sh "$UI_PICK_RESULT"
+    run tools psql.sh "$UI_PICK_RESULT" || true
   else
-    run tools psql.sh
+    run tools psql.sh || true
   fi
 }
 
 main() {
   set_env
   ui_init
+
+  trap 'echo ""; ui_warn "Interrupted — returning to menu."; echo ""' INT
 
   while true; do
     GO_HOME=0

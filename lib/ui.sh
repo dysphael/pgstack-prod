@@ -233,7 +233,7 @@ ui_pause() {
   echo ""
   ui_dim "  ---"
   ui_dim "  [Enter] return to menu   [h] main menu"
-  read -r -p "  > " _ui_pause_input
+  read -r -p "  > " _ui_pause_input || true
   case "${_ui_pause_input:-}" in
     h|H) return 2 ;;
   esac
@@ -244,7 +244,7 @@ ui_read_choice() {
   local prompt="${1:-Choice}"
   echo ""
   ui_c "$UI_GREEN"
-  read -r -p "  ${prompt}: " UI_CHOICE
+  read -r -p "  ${prompt}: " UI_CHOICE || true
   ui_c "$UI_RESET"
 }
 
