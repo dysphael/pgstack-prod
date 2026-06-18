@@ -239,7 +239,7 @@ submenu_databases() {
     GO_HOME=0
     draw_submenu "Databases" \
       "1" "List databases" "all project DBs" \
-      "2" "Create database" "optional users" \
+      "2" "Create database" "empty, public" \
       "3" "Drop database" "destructive" \
       "4" "Connection strings" "per DB"
     ui_read_choice
