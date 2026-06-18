@@ -132,7 +132,28 @@ See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough
 | Localhost only | `POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432` if apps run on the same VPS |
 | Copy backups off-server | `scp` or cloud sync — see [docs/BACKUP.md](docs/BACKUP.md) |
 
-## Production defaults
+## Troubleshooting
+
+### `role "X" does not exist` / login failed for admin user
+
+`POSTGRES_USER` and `POSTGRES_PASSWORD` are applied **only on first boot** (empty Docker volume). Changing `.env` later does not rename the admin user.
+
+**Fresh install (no data to keep):**
+
+```bash
+docker compose down
+docker volume rm pgstack-prod_pgdata    # name may vary: docker volume ls | grep pgdata
+docker compose up -d
+./scripts/overview/status.sh
+```
+
+**Already has databases:** put the **original** `POSTGRES_USER` back in `.env` (the one used on first `docker compose up`), then restart:
+
+```bash
+docker compose restart postgres
+```
+
+---
 
 | Feature | Implementation |
 |---------|----------------|

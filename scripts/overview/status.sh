@@ -35,6 +35,12 @@ if postgres_ready; then
     WHERE datistemplate = false AND datname <> 'postgres'
     ORDER BY datname;
   "
+elif postgres_server_up; then
+  echo "PostgreSQL: running (container healthy)"
+  echo "Login failed for admin user '${POSTGRES_USER}'."
+  echo ""
+  echo "POSTGRES_USER is set only on first boot. Your volume has a different admin user."
+  echo "Fix: restore the original user in .env, or reset the volume if this is a fresh install."
 else
   echo "PostgreSQL: not ready (run: docker compose up -d)"
 fi

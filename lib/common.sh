@@ -11,11 +11,35 @@ set_env() {
   set -a && source .env && set +a
 }
 
+postgres_ready() {
+  docker compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1 \
+    && docker compose exec -T postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB:-postgres}" -c 'SELECT 1' >/dev/null 2>&1
+}
+
+postgres_server_up() {
+  docker compose exec -T postgres pg_isready -U "postgres" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1 \
+    || docker compose exec -T postgres pg_isready >/dev/null 2>&1
+}
+
+auth_mismatch_hint() {
+  echo "ERROR: PostgreSQL is running but user '${POSTGRES_USER}' cannot connect." >&2
+  echo "POSTGRES_USER is created only on first boot (empty volume)." >&2
+  echo "If you changed .env after the first start:" >&2
+  echo "  - Put back the original POSTGRES_USER in .env, or" >&2
+  echo "  - Reset data: docker compose down && docker volume rm \$(docker volume ls -q | grep pgdata)" >&2
+  echo "    then docker compose up -d (destroys all databases)" >&2
+}
+
 require_postgres() {
-  if ! docker compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1; then
-    echo "ERROR: PostgreSQL not ready. Run: docker compose up -d" >&2
+  if postgres_ready; then
+    return 0
+  fi
+  if postgres_server_up; then
+    auth_mismatch_hint
     exit 1
   fi
+  echo "ERROR: PostgreSQL not ready. Run: docker compose up -d" >&2
+  exit 1
 }
 
 valid_db_name() {
@@ -28,9 +52,6 @@ abs_path() {
   printf '%s/%s\n' "$ROOT" "$path"
 }
 
-postgres_ready() {
-  docker compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1
-}
 
 list_project_dbs() {
   docker compose exec -T postgres psql -U "${POSTGRES_USER}" -d postgres -Atc \

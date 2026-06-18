@@ -160,4 +160,5 @@ postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
 |-------|-----|
 | `.env file not found` | `cp .env.example .env && nano .env` |
 | `PostgreSQL is not running` | `docker compose up -d` |
+| `role "X" does not exist` | `POSTGRES_USER` changed after first boot — see README Troubleshooting |
 | `backup file is empty` | Check `docker compose logs postgres` |
