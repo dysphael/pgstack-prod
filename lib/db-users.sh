@@ -70,17 +70,22 @@ set_role_password() {
     -c "ALTER ROLE \"${role}\" WITH PASSWORD ${pw_lit};"
 }
 
-# Same TCP path remote apps use (published port + SCRAM). Trust on 127.0.0.1 inside the container is NOT tested.
+# Same TCP path remote apps use (published port + SCRAM).
 verify_role_login() {
   local user="$1" pw="$2" db="$3"
   local port="${4:-$(publish_host_port)}"
+  local attempt
 
-  if command -v psql >/dev/null 2>&1; then
-    PGPASSWORD="$pw" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1 && return 0
-  fi
-
-  docker run --rm --network host -e PGPASSWORD="$pw" postgres:16-alpine \
-    psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1
+  for attempt in 1 2 3 4 5; do
+    if command -v psql >/dev/null 2>&1; then
+      PGPASSWORD="$pw" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1 && return 0
+    else
+      docker run --rm --network host -e PGPASSWORD="$pw" postgres:16-alpine \
+        psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1 && return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 resolve_app_password() {
