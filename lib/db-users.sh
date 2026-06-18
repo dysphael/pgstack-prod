@@ -437,6 +437,33 @@ databases_for_role() {
   "
 }
 
+wipe_database_for_restore() {
+  local db="$1"
+  terminate_db_connections "$db"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" \
+    -c "DROP SCHEMA IF EXISTS app CASCADE;"
+}
+
+regrant_database_users_after_restore() {
+  local db="$1" db_owner="$2"
+  shift 2
+  local users=("$@") user grant_owner
+
+  grant_owner="${db_owner:-$POSTGRES_USER}"
+  [[ -n "$grant_owner" ]] || grant_owner="$POSTGRES_USER"
+
+  for user in "${users[@]}"; do
+    [[ -z "$user" ]] && continue
+    if [[ "$user" == "$db_owner" && "$db_owner" != "$POSTGRES_USER" ]]; then
+      echo "Re-granting owner access to '${user}'..."
+      grant_owner_access "$db" "$user"
+    else
+      echo "Re-granting write access to '${user}'..."
+      grant_write_access "$db" "$grant_owner" "$user"
+    fi
+  done
+}
+
 revoke_app_grants() {
   local db="$1" user="$2"
   schema_app_exists "$db" || return 0
