@@ -2,15 +2,21 @@
 
 Production PostgreSQL 16 with persistent storage and DNS-based access for applications.
 
-> **New to backups?** Read the full beginner guide: **[docs/BACKUP.md](docs/BACKUP.md)**
+> **Scripts:** Quick guide → **[docs/SCRIPTS.md](docs/SCRIPTS.md)**  
+> **Backups (beginner):** Full guide → **[docs/BACKUP.md](docs/BACKUP.md)**
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 nano .env                    # set POSTGRES_PASSWORD and POSTGRES_HOST
-./scripts/setup.sh           # create folders and fix log permissions
-docker compose up -d
+docker compose up -d         # creates folders and starts PostgreSQL
+./scripts/manager.sh         # interactive manager (recommended)
+```
+
+Or run individual scripts:
+
+```bash
 ./scripts/status.sh          # verify everything is healthy
 ```
 
@@ -26,28 +32,60 @@ Use the same hostname as `POSTGRES_HOST` in `.env`.
 
 ## Application connection
 
-```text
-postgresql://appuser:PASSWORD@db.yourdomain.com:5432/DATABASE_NAME
-```
-
-On the same VPS:
+Use the **project owner** user from `create-db.sh` — not `appuser`:
 
 ```text
-postgresql://appuser:PASSWORD@localhost:5432/DATABASE_NAME
+postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
 ```
 
 ## Create a project database
 
-**Simple** (shared `appuser`):
+Each project gets **one database** and **three users**:
 
-```bash
-docker compose exec postgres psql -U appuser -d postgres -c "CREATE DATABASE myapp;"
-```
-
-**Recommended** (dedicated user per project):
+| User | Access | Use in apps? |
+|------|--------|--------------|
+| `appuser` (`.env`) | Server admin — backups, scripts | **No** |
+| `myapp_owner` | Read, write, delete, create tables | **Yes** (main app) |
+| `myapp_read` | Read only — all tables in `app` | **Yes** (reports, BI) |
+| `myapp_admin` | Create read/write users for `myapp` only | **No** (management) |
 
 ```bash
 ./scripts/create-db.sh myapp
+```
+
+Creates `myapp` plus `myapp_owner`, `myapp_read`, and `myapp_admin` (you set each password).
+
+**Main app connection:**
+
+```text
+postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
+```
+
+**Read-only connection:**
+
+```text
+postgresql://myapp_read:PASSWORD@db.yourdomain.com:5432/myapp
+```
+
+**Add more users later:**
+
+```bash
+./scripts/add-user.sh myapp read analytics
+./scripts/add-user.sh myapp write worker
+```
+
+**Or let the DB admin create users** (logged in as `myapp_admin`):
+
+```sql
+SELECT app.provision_user('analytics', 'read',  'password');
+SELECT app.provision_user('worker',    'write', 'password');
+```
+
+Verify isolation:
+
+```bash
+./scripts/list-access.sh
+./scripts/list-access.sh myapp
 ```
 
 ## Logs (persistent files)
@@ -59,18 +97,11 @@ ls logs/postgres/
 tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log
 ```
 
-Logged events: connections, disconnections, schema changes (DDL), slow queries (> 500 ms).
+Logged events: schema changes (DDL) and slow queries (> 500 ms).
 
-If logs are not created, run:
-
-```bash
-sudo chown -R 70:70 logs/postgres
-docker compose restart postgres
-```
+Folders `logs/postgres/` and `backups/` are created automatically on `docker compose up`.
 
 ## Backup & restore (summary)
-
-Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
 
 | Task | Command |
 |------|---------|
@@ -79,6 +110,9 @@ Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
 | List backup files | `./scripts/backup.sh --list` |
 | Restore a backup | `./scripts/restore.sh backups/backup_myapp_DATE.sql.gz myapp` |
 | Health check | `./scripts/status.sh` |
+
+See **[docs/SCRIPTS.md](docs/SCRIPTS.md)** for what each script does.  
+See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough.
 
 ## Verify DNS connectivity
 
@@ -94,7 +128,7 @@ Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
 |----------|---------|
 | Firewall | `sudo ufw allow from APP_SERVER_IP to any port 5432 proto tcp` |
 | Strong password | 32+ random characters in `.env` |
-| Per-project users | `./scripts/create-db.sh myapp` instead of sharing `appuser` |
+| Per-project users | `./scripts/create-db.sh myapp` — owner + read + admin per DB |
 | Localhost only | `POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432` if apps run on the same VPS |
 | Copy backups off-server | `scp` or cloud sync — see [docs/BACKUP.md](docs/BACKUP.md) |
 
@@ -109,6 +143,7 @@ Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
 | Extensions | `uuid-ossp`, `pg_stat_statements` (first boot only) |
 | Memory limit | `POSTGRES_MEM_LIMIT` (default 1536M) |
 | Auth | `scram-sha-256` |
+| Logs | DDL + slow queries (> 500 ms), daily rotation |
 
 ### Scaling memory
 
@@ -136,6 +171,7 @@ Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose rest
 ## Operations
 
 ```bash
+./scripts/manager.sh         # interactive menu for all tasks
 ./scripts/status.sh
 docker compose logs -f postgres
 docker compose exec postgres psql -U appuser -d postgres
@@ -150,16 +186,21 @@ docker compose down              # stops container, keeps data
 ```text
 pgstack-prod/
 ├── docker-compose.yml
-├── docs/BACKUP.md
+├── docs/
+│   ├── SCRIPTS.md              # quick guide for every script
+│   └── BACKUP.md               # beginner backup/restore guide
 ├── logs/postgres/              # persistent PostgreSQL log files
 ├── backups/                    # backup .sql.gz files
 ├── postgres/
+│   ├── entrypoint-wrapper.sh
 │   ├── conf/postgresql.conf
 │   └── init/01-extensions.sql
 └── scripts/
-    ├── setup.sh                # first-time folder setup
+    ├── manager.sh              # interactive menu (start here)
     ├── status.sh               # health check
+    ├── create-db.sh            # owner + read + admin per project
+    ├── add-user.sh             # add read/write user to a project
+    ├── list-access.sh          # verify user isolation
     ├── backup.sh
-    ├── restore.sh
-    └── create-db.sh
+    └── restore.sh
 ```

@@ -1,41 +1,66 @@
 #!/usr/bin/env bash
-# Shared helpers for pgstack-prod scripts.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 set_env() {
-  ROOT="$(cd "$(dirname "${BASH_SOURCE[1]}")/.." && pwd)"
   cd "$ROOT"
-
   if [[ ! -f .env ]]; then
-    echo ""
-    echo "ERROR: .env file not found."
-    echo "Fix:   cp .env.example .env && nano .env"
-    echo ""
+    echo "ERROR: .env not found. Run: cp .env.example .env" >&2
     exit 1
   fi
-
   # shellcheck disable=SC1091
-  source .env
+  set -a && source .env && set +a
 }
 
 require_postgres() {
-  if ! docker compose ps --status running --services postgres 2>/dev/null | grep -qx postgres; then
-    echo ""
-    echo "ERROR: PostgreSQL is not running."
-    echo "Fix:   docker compose up -d && docker compose ps"
-    echo ""
-    exit 1
-  fi
-
   if ! docker compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1; then
-    echo ""
-    echo "ERROR: PostgreSQL is running but not ready yet."
-    echo "Fix:   wait a few seconds, then try again."
-    echo ""
+    echo "ERROR: PostgreSQL not ready. Run: docker compose up -d" >&2
     exit 1
   fi
 }
 
 valid_db_name() {
-  local name="$1"
-  [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]]
+  [[ "${1:-}" =~ ^[a-z][a-z0-9_]*$ ]]
+}
+
+abs_path() {
+  local path="${1:-.}"
+  path="${path#./}"
+  printf '%s/%s\n' "$ROOT" "$path"
+}
+
+postgres_ready() {
+  docker compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1
+}
+
+list_project_dbs() {
+  docker compose exec -T postgres psql -U "${POSTGRES_USER}" -d postgres -Atc \
+    "SELECT datname FROM pg_database WHERE datistemplate = false AND datname <> 'postgres' ORDER BY datname;"
+}
+
+# Usage: pick_from_list "Prompt" item1 item2 ...
+# Sets PICK_RESULT to the chosen item. Returns 1 on cancel.
+pick_from_list() {
+  local prompt="$1"
+  shift
+  local items=("$@")
+  local i choice
+
+  if [[ ${#items[@]} -eq 0 ]]; then
+    echo "No options available." >&2
+    return 1
+  fi
+
+  echo "$prompt"
+  for i in "${!items[@]}"; do
+    printf '  %d) %s\n' "$((i + 1))" "${items[$i]}"
+  done
+  printf '  0) Cancel\n'
+
+  read -r -p "Choice: " choice
+  [[ "$choice" == "0" || -z "$choice" ]] && return 1
+  [[ "$choice" =~ ^[0-9]+$ ]] || { echo "Invalid choice." >&2; return 1; }
+  (( choice >= 1 && choice <= ${#items[@]} )) || { echo "Invalid choice." >&2; return 1; }
+
+  PICK_RESULT="${items[$((choice - 1))]}"
+  return 0
 }

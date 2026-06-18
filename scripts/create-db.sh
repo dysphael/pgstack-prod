@@ -1,60 +1,46 @@
 #!/usr/bin/env bash
-# Create a project database with a dedicated owner.
-# Usage: ./scripts/create-db.sh <database_name> [owner_user]
+# Create an isolated project database with owner, read-only, and DB-admin users.
+#
+# Usage: ./scripts/create-db.sh <database>
 
 set -euo pipefail
+source "$(dirname "$0")/_common.sh"
+source "$(dirname "$0")/_db-users.sh"
 
-# shellcheck source=_common.sh
-source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+DB="${1:-}"
+[[ -n "$DB" ]] || { echo "Usage: ./scripts/create-db.sh <database>" >&2; exit 1; }
+valid_db_name "$DB" || { echo "ERROR: invalid database name." >&2; exit 1; }
 
-DB_NAME="${1:-}"
-OWNER="${2:-${DB_NAME}_app}"
-
-if [[ -z "$DB_NAME" ]]; then
-  echo "Usage: ./scripts/create-db.sh <database_name> [owner_user]" >&2
-  exit 1
-fi
-
-if ! valid_db_name "$DB_NAME"; then
-  echo "ERROR: invalid database name '${DB_NAME}'." >&2
-  exit 1
-fi
-
-if ! valid_db_name "$OWNER"; then
-  echo "ERROR: invalid owner name '${OWNER}'." >&2
-  exit 1
-fi
+OWNER="${DB}_owner"
+READ_USER="${DB}_read"
+ADMIN_USER="${DB}_admin"
 
 set_env
 require_postgres
 
-read -r -s -p "Password for new user '${OWNER}': " OWNER_PASSWORD
-echo
-read -r -s -p "Confirm password: " OWNER_PASSWORD_CONFIRM
-echo
-
-if [[ "$OWNER_PASSWORD" != "$OWNER_PASSWORD_CONFIRM" ]]; then
-  echo "ERROR: passwords do not match." >&2
-  exit 1
-fi
-
-OWNER_PASSWORD_ESC="${OWNER_PASSWORD//\'/\'\'}"
-
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${OWNER}') THEN
-    CREATE ROLE ${OWNER} WITH LOGIN PASSWORD '${OWNER_PASSWORD_ESC}';
-  END IF;
-END
-\$\$;
-
-SELECT 'CREATE DATABASE ${DB_NAME} OWNER ${OWNER}'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DB_NAME}')\gexec
-
-GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${OWNER};
-SQL
-
+echo "Creating database '${DB}' with 3 users:"
+echo "  ${OWNER}      — read, write, delete"
+echo "  ${READ_USER}  — read only"
+echo "  ${ADMIN_USER} — manage users for this database"
 echo ""
-echo "Database ready:"
-echo "  postgresql://${OWNER}:****@${POSTGRES_HOST:-localhost}:5432/${DB_NAME}"
+
+OWNER_PW="$(sql_escape "$(prompt_password "$OWNER")")"
+READ_PW="$(sql_escape "$(prompt_password "$READ_USER")")"
+ADMIN_PW="$(sql_escape "$(prompt_password "$ADMIN_USER")")"
+
+echo "Provisioning..."
+
+ensure_role_login "$OWNER" "$OWNER_PW" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+create_project_database "$DB" "$OWNER"
+isolate_to_db "$DB" "$OWNER"
+setup_project_schema "$DB" "$OWNER"
+
+ensure_role_login "$READ_USER" "$READ_PW" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+isolate_to_db "$DB" "$READ_USER"
+grant_read_access "$DB" "$OWNER" "$READ_USER"
+
+ensure_role_login "$ADMIN_USER" "$ADMIN_PW" "NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT"
+isolate_to_db "$DB" "$ADMIN_USER"
+grant_db_admin "$DB" "$ADMIN_USER"
+
+print_user_summary "$DB" "$OWNER" "$READ_USER" "$ADMIN_USER"

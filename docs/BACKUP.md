@@ -21,10 +21,10 @@ Backups are stored in the `backups/` folder as `.sql.gz` files (compressed text 
 cd ~/pgstack-prod
 ```
 
-3. Run setup (first time only):
+3. Start PostgreSQL:
 
 ```bash
-./scripts/setup.sh
+docker compose up -d
 ```
 
 4. Make sure PostgreSQL is running:
