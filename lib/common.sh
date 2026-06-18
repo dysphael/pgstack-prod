@@ -52,6 +52,18 @@ abs_path() {
   printf '%s/%s\n' "$ROOT" "$path"
 }
 
+# Usage: read_array VAR_NAME command [args...]
+# Fills a named array from command stdout (bash 3.2+ compatible).
+read_array() {
+  local __var="$1" __line
+  shift
+  local -a __items=()
+  while IFS= read -r __line; do
+    [[ -n "$__line" ]] && __items+=("$__line")
+  done < <("$@")
+  eval "$__var=(\"\${__items[@]}\")"
+}
+
 
 list_project_dbs() {
   docker compose exec -T postgres psql -U "${POSTGRES_USER}" -d postgres -Atc \
@@ -89,7 +101,8 @@ pick_from_list() {
 # Prompt to pick a project database. Sets PICK_RESULT. Returns 1 on cancel.
 pick_project_db() {
   local prompt="${1:-Select database:}"
-  mapfile -t DBS < <(list_project_dbs)
+  local -a DBS=()
+  read_array DBS list_project_dbs
   [[ ${#DBS[@]} -gt 0 ]] || { echo "No project databases found." >&2; return 1; }
   pick_from_list "$prompt" "${DBS[@]}"
 }

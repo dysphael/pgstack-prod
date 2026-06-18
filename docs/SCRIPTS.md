@@ -48,6 +48,8 @@ After an action finishes, press **Enter** to return to the menu or **`h`** to ju
 
 Submenus show a breadcrumb (`▸ Main > Backups`) and a compact header with host, admin user, and online status. The ASCII banner appears once at startup; other screens use the compact header.
 
+Default layout width is **72 columns** (override with `PGSTACK_UI_WIDTH=80`). Lines truncate with `...` when content is too long.
+
 Respects `NO_COLOR=1` and non-TTY output (plain text, no ANSI).
 
 ## CLI scripts

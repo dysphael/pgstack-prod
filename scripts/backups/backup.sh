@@ -26,7 +26,8 @@ if [[ -n "$TARGET" ]]; then
   valid_db_name "$TARGET" || { echo "ERROR: invalid name '${TARGET}'." >&2; exit 1; }
   backup_db "$TARGET"
 else
-  mapfile -t DBS < <(list_project_dbs)
+  DBS=()
+  read_array DBS list_project_dbs
   if [[ ${#DBS[@]} -eq 0 ]]; then
     backup_db "${POSTGRES_DB}"
   else

@@ -17,10 +17,12 @@ backup_db_from_filename() {
 
 collect_backups() {
   BACKUP_FILES=()
-  local dir
+  local dir file
   dir="$(backup_dir)"
   mkdir -p "$dir"
-  mapfile -t BACKUP_FILES < <(find "$dir" -maxdepth 1 -name 'backup_*.sql.gz' -type f 2>/dev/null | sort -r)
+  while IFS= read -r file; do
+    [[ -n "$file" ]] && BACKUP_FILES+=("$file")
+  done < <(find "$dir" -maxdepth 1 -name 'backup_*.sql.gz' -type f 2>/dev/null | sort -r)
 }
 
 backup_path_at() {

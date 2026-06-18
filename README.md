@@ -14,26 +14,33 @@ docker compose up -d         # creates folders and starts PostgreSQL
 ./bin/manager.sh              # interactive manager (or ./manager.sh)
 ```
 
-The manager is a colorized terminal UI with a live system dashboard, boxed menus, breadcrumbs, and keyboard shortcuts.
+The manager is a colorized terminal UI (72-column layout) with a live system dashboard, boxed menus, breadcrumbs, and keyboard shortcuts.
 
 ```text
- pgstack │ db.yourdomain.com │ blockway │ ● ONLINE
- ▸ Main
+┌─ pgstack ──────────────────────────────────────────────────────────┐
+│ Host           db.yourdomain.com                                     │
+│ Admin          blockway                                              │
+│ Status         ● ONLINE                                              │
+└──────────────────────────────────────────────────────────────────────┘
+  ▸ Main
 
-┌─ System ─────────────────────────────────────┐
-│ PostgreSQL   ● ONLINE   PG 16.14   up 2h    │
-│ Databases    2 project   myapp, test        │
-│ Backups      3 files (12M)   latest: ...    │
-│ Docker       postgres container: running    │
-│ Paths        backups/   logs/postgres/      │
-└──────────────────────────────────────────────┘
+┌─ System ───────────────────────────────────────────────────────────┐
+│ PostgreSQL     ONLINE                                                │
+│ Version        PG 16.14                                              │
+│ Uptime         02:15:30                                              │
+│ Databases      2 project · myapp, test                             │
+│ Backups        3 files (12M)                                         │
+│ Latest         2026-06-18 14:30:00                                   │
+│ Docker         postgres · running                                    │
+│ Backup dir     backups/                                              │
+│ Logs dir       logs/postgres/                                        │
+└──────────────────────────────────────────────────────────────────────┘
 
-┌─ Menu ─────────────────────────────────────┐
-  1) Overview              status, stats, logs
-  2) Databases             create, list, drop
-  ...
-└─────────────────────────────────────────────┘
- [0] back/exit  [h] home  [?] help  [q] quit
+┌─ Menu ─────────────────────────────────────────────────────────────┐
+│   1) Overview            status, stats, logs                         │
+│   2) Databases           create, list, drop                          │
+│  ...                                                                 │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 | Key | Action |
@@ -45,6 +52,8 @@ The manager is a colorized terminal UI with a live system dashboard, boxed menus
 | `q` | Quit (main) or Home (submenu) |
 
 After running an action: `[Enter]` continues, `[h]` returns to main menu.
+
+Layout uses a fixed **72-column** width. Override with `PGSTACK_UI_WIDTH=80 ./bin/manager.sh` if your terminal is wider.
 
 Or run individual scripts:
 

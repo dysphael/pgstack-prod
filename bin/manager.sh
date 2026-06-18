@@ -55,60 +55,73 @@ require_db_action() {
 
 ui_pick_project_db() {
   local prompt="${1:-Select database:}"
-  mapfile -t DBS < <(list_project_dbs)
+  local -a DBS=()
+  read_array DBS list_project_dbs
   [[ ${#DBS[@]} -gt 0 ]] || { ui_err "No project databases found."; return 1; }
   ui_pick_list "$prompt" "${DBS[@]}"
 }
 
 dashboard_live() {
-  local pg_line db_line backup_line paths_line
   local db_count=0 db_list="" pg_ver="" pg_uptime=""
   local backup_count=0 latest_backup="none" backup_size="0"
+  local docker_state backup_path log_path
+
+  ui_box_open "System"
 
   if postgres_ready; then
+    pg_ver="?"
+    pg_uptime="?"
     read -r pg_ver pg_uptime < <(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc \
-      "SELECT split_part(version(),' ',2), (now() - pg_postmaster_start_time())::text;" 2>/dev/null | tr '|' ' ')
+      "SELECT split_part(version(),' ',2), (now() - pg_postmaster_start_time())::text;" 2>/dev/null | tr '|' ' ') || true
     pg_ver="${pg_ver:-?}"
     pg_uptime="${pg_uptime:-?}"
-    pg_line="PostgreSQL   $(ui_badge ok ONLINE)   PG ${pg_ver}   up ${pg_uptime}"
+    ui_box_row "PostgreSQL" "ONLINE"
+    ui_box_row "Version" "PG ${pg_ver}"
+    ui_box_row "Uptime" "${pg_uptime}"
   elif postgres_server_up; then
-    pg_line="PostgreSQL   $(ui_badge warn AUTH_FAIL)   check POSTGRES_USER in .env"
+    ui_box_row "PostgreSQL" "AUTH FAIL"
+    ui_box_row "Fix" "Check POSTGRES_USER in .env"
   else
-    pg_line="PostgreSQL   $(ui_badge err OFFLINE)   docker compose up -d"
+    ui_box_row "PostgreSQL" "OFFLINE"
+    ui_box_row "Start" "docker compose up -d"
   fi
 
   if postgres_ready; then
-    mapfile -t DBS < <(list_project_dbs)
+    local -a DBS=()
+    read_array DBS list_project_dbs
     db_count=${#DBS[@]}
     if [[ $db_count -gt 0 ]]; then
       db_list="$(IFS=', '; echo "${DBS[*]}")"
     else
-      db_list="none"
+      db_list="none yet"
     fi
+    ui_box_row "Databases" "${db_count} project · ${db_list}"
   else
-    db_list="unavailable"
+    ui_box_row "Databases" "unavailable"
   fi
-  db_line="Databases    ${db_count} project   ${db_list}"
 
   collect_backups
   backup_count=${#BACKUP_FILES[@]}
   if [[ $backup_count -gt 0 ]]; then
     latest_backup="$(backup_mtime "${BACKUP_FILES[0]}")"
     backup_size="$(du -sh "$(backup_dir)" 2>/dev/null | cut -f1)"
+    ui_box_row "Backups" "${backup_count} files (${backup_size})"
+    ui_box_row "Latest" "${latest_backup}"
   else
-    backup_size="0"
+    ui_box_row "Backups" "none"
   fi
-  backup_line="Backups      ${backup_count} files (${backup_size})   latest: ${latest_backup}"
 
-  local docker_state
-  docker_state="$(docker compose ps postgres --format '{{.State}}' 2>/dev/null | head -1)"
+  docker_state="not running"
+  docker_state="$(docker compose ps postgres --format '{{.State}}' 2>/dev/null | head -1)" || docker_state="not running"
   docker_state="${docker_state:-not running}"
-  local docker_line="Docker       postgres container: ${docker_state}"
+  ui_box_row "Docker" "postgres · ${docker_state}"
 
-  paths_line="Paths        $(backup_dir | sed "s|$ROOT/||")"
-  paths_line+="   $(abs_path "${LOG_DIR:-./logs/postgres}" | sed "s|$ROOT/||")"
+  backup_path="$(backup_dir | sed "s|$ROOT/||")"
+  log_path="$(abs_path "${LOG_DIR:-./logs/postgres}" | sed "s|$ROOT/||")"
+  ui_box_row "Backup dir" "${backup_path}"
+  ui_box_row "Logs dir" "${log_path}"
 
-  ui_box "System" "$pg_line" "$db_line" "$backup_line" "$docker_line" "$paths_line"
+  ui_box_close
 }
 
 draw_main_screen() {
@@ -122,31 +135,33 @@ draw_main_screen() {
   echo ""
   dashboard_live
   echo ""
-  ui_box_open "Menu" 40
+  ui_box_open "Menu"
   ui_menu_item "1" "Overview" "status, stats, logs"
   ui_menu_item "2" "Databases" "create, list, drop"
   ui_menu_item "3" "Users" "roles, passwords"
   ui_menu_item "4" "Backups" "backup, restore"
   ui_menu_item "5" "Tools" "psql shell"
   ui_menu_item "0" "Exit"
-  ui_box_close 40
+  ui_box_close
   ui_footer_hints
 }
 
 draw_submenu() {
   local section="$1"
   shift
+  local -a items=("$@")
+  local i
+
   ui_clear
   ui_header_compact
   ui_breadcrumb "Main > ${section}"
   echo ""
-  ui_box_open "$section" 48
-  while [[ $# -ge 3 ]]; do
-    ui_menu_item "$1" "$2" "$3"
-    shift 3
+  ui_box_open "$section"
+  for ((i = 0; i + 2 < ${#items[@]}; i += 3)); do
+    ui_menu_item "${items[i]}" "${items[i + 1]}" "${items[i + 2]}"
   done
   ui_menu_item "0" "Back"
-  ui_box_close 48
+  ui_box_close
   ui_footer_hints
 }
 
@@ -154,7 +169,7 @@ handle_nav_input() {
   local choice="$1" is_main="${2:-0}"
   case "$choice" in
     h|H) GO_HOME=1; return 0 ;;
-    ?) ui_help_screen; return 0 ;;
+    \?) ui_help_screen; return 0 ;;
     q|Q)
       if [[ "$is_main" -eq 1 ]]; then
         ui_ok "Bye."
@@ -316,7 +331,8 @@ action_conn_info() {
 
 action_list_access() {
   require_db_action || return 0
-  mapfile -t DBS < <(list_project_dbs)
+  local -a DBS=()
+  read_array DBS list_project_dbs
   if [[ ${#DBS[@]} -gt 0 ]] && ui_pick_list "Filter by database:" "All databases" "${DBS[@]}"; then
     if [[ "$UI_PICK_RESULT" == "All databases" ]]; then
       run users list-access.sh
