@@ -7,6 +7,8 @@ services:
     container_name: postgres
     restart: unless-stopped
     shm_size: 256mb
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -18,11 +20,10 @@ services:
       - "${POSTGRES_PORT_PUBLISH:-5432:5432}"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    command: >
-      postgres
-      -c listen_addresses=*
-      -c timezone=UTC
-      -c log_timezone=UTC
+      - ${LOG_DIR:-./logs/postgres}:/var/log/postgresql
+      - ./postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-postgres}"]
       interval: 10s
@@ -30,6 +31,12 @@ services:
       retries: 5
       start_period: 30s
     stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEM_LIMIT:-1536M}
+        reservations:
+          memory: 256M
     logging:
       driver: json-file
       options:

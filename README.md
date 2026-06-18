@@ -1,8 +1,21 @@
 # pgstack-prod
 
-Production PostgreSQL 16 — DNS-based access for your applications (no admin UI).
+Production PostgreSQL 16 with persistent storage and DNS-based access for applications.
 
-## DNS setup (required)
+> **New to backups?** Read the full beginner guide: **[docs/BACKUP.md](docs/BACKUP.md)**
+
+## Quick start
+
+```bash
+cp .env.example .env
+nano .env                    # set POSTGRES_PASSWORD and POSTGRES_HOST
+mkdir -p logs/postgres backups
+docker compose up -d
+docker compose ps            # wait for "healthy"
+chmod +x scripts/*.sh
+```
+
+## DNS
 
 Create an **A record** pointing to this server's public IP:
 
@@ -12,30 +25,13 @@ db.yourdomain.com  →  YOUR_VPS_PUBLIC_IP
 
 Use the same hostname as `POSTGRES_HOST` in `.env`.
 
-## Deploy
-
-```bash
-cp .env.example .env
-nano .env
-docker compose up -d
-docker compose ps   # wait for "healthy"
-```
-
 ## Application connection
-
-Use `POSTGRES_HOST` in your apps:
 
 ```text
 postgresql://appuser:PASSWORD@db.yourdomain.com:5432/DATABASE_NAME
 ```
 
-Example:
-
-```env
-DATABASE_URL=postgresql://appuser:PASSWORD@db.yourdomain.com:5432/myapp
-```
-
-Apps on the **same VPS** can also use:
+On the same VPS:
 
 ```text
 postgresql://appuser:PASSWORD@localhost:5432/DATABASE_NAME
@@ -43,61 +39,87 @@ postgresql://appuser:PASSWORD@localhost:5432/DATABASE_NAME
 
 ## Create a project database
 
+**Simple** (shared `appuser`):
+
 ```bash
 docker compose exec postgres psql -U appuser -d postgres -c "CREATE DATABASE myapp;"
 ```
 
-## Will DNS work? (checklist)
-
-This stack is configured for remote access via DNS when these conditions are met:
-
-| Requirement | Status in this repo |
-|-------------|---------------------|
-| DNS A record → VPS public IP | You configure at your DNS provider |
-| PostgreSQL listens on all interfaces | `listen_addresses=*` in `docker-compose.yml` |
-| Port 5432 published on the host | `POSTGRES_PORT_PUBLISH=5432:5432` (default) |
-| Password authentication | `POSTGRES_USER` / `POSTGRES_PASSWORD` in `.env` |
-| Firewall allows port 5432 | You configure on the VPS (see below) |
-
-**Verify after deploy:**
+**Recommended** (dedicated user per project):
 
 ```bash
-# 1. DNS resolves to your VPS IP
-dig +short A db.yourdomain.com
-
-# 2. Port 5432 is open (from your app server or local machine)
-nc -zv db.yourdomain.com 5432
-
-# 3. PostgreSQL accepts connections (replace PASSWORD)
-psql "postgresql://appuser:PASSWORD@db.yourdomain.com:5432/postgres" -c "SELECT 1;"
+./scripts/create-db.sh myapp
 ```
 
-If step 1 works but step 2 fails, open port 5432 in the VPS firewall and cloud security group.
+## Logs (persistent files)
+
+PostgreSQL saves daily log files to `logs/postgres/`:
+
+```bash
+ls logs/postgres/
+tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log
+```
+
+Logged events: connections, disconnections, schema changes (DDL), slow queries (> 500 ms).
+
+## Backup & restore (summary)
+
+Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
+
+| Task | Command |
+|------|---------|
+| Backup one database | `./scripts/backup.sh myapp` |
+| Backup all databases | `./scripts/backup.sh` |
+| List backup files | `./scripts/backup.sh --list` |
+| Restore a backup | `./scripts/restore.sh backups/backup_myapp_DATE.sql.gz myapp` |
+
+Backups are saved in `backups/` as `.sql.gz` files.
+
+## Verify DNS connectivity
+
+| Step | Command |
+|------|---------|
+| DNS resolves | `dig +short A db.yourdomain.com` |
+| Port open | `nc -zv db.yourdomain.com 5432` |
+| DB accepts login | `psql "postgresql://appuser:PASSWORD@db.yourdomain.com:5432/postgres" -c "SELECT 1;"` |
 
 ## Security
 
-Port `5432` is exposed on the network. Restrict it to your application servers:
+| Practice | Details |
+|----------|---------|
+| Firewall | `sudo ufw allow from APP_SERVER_IP to any port 5432 proto tcp` |
+| Strong password | 32+ random characters in `.env` |
+| Per-project users | `./scripts/create-db.sh myapp` instead of sharing `appuser` |
+| Localhost only | `POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432` if apps run on the same VPS |
+| Copy backups off-server | `scp` or cloud sync — see [docs/BACKUP.md](docs/BACKUP.md) |
 
-```bash
-sudo ufw allow from APP_SERVER_IP to any port 5432 proto tcp
-sudo ufw enable
-```
+## Production defaults
 
-For **localhost-only** access on the VPS, set in `.env`:
+| Feature | Implementation |
+|---------|----------------|
+| Persistent data | Docker volume `pgdata` |
+| Persistent logs | `logs/postgres/postgresql-YYYY-MM-DD.log` |
+| Integrity checks | `data-checksums` on new installs |
+| Tuning | `postgres/conf/postgresql.conf` (defaults for 2 GB RAM) |
+| Extensions | `uuid-ossp`, `pg_stat_statements` (first boot only) |
+| Memory limit | `POSTGRES_MEM_LIMIT` (default 1536M) |
 
-```env
-POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432
-```
+### Scaling memory
+
+Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose restart postgres`.
 
 ## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `POSTGRES_USER` | Database user |
-| `POSTGRES_PASSWORD` | Database password |
+| `POSTGRES_USER` | Admin/application user |
+| `POSTGRES_PASSWORD` | User password |
 | `POSTGRES_DB` | Database created on first boot (`postgres` recommended) |
-| `POSTGRES_HOST` | DNS hostname used in application connection strings |
-| `POSTGRES_PORT_PUBLISH` | Port mapping (`5432:5432` or `127.0.0.1:5432:5432`) |
+| `POSTGRES_HOST` | DNS hostname for connection strings |
+| `POSTGRES_PORT_PUBLISH` | `5432:5432` or `127.0.0.1:5432:5432` |
+| `POSTGRES_MEM_LIMIT` | Container memory cap (e.g. `1536M`) |
+| `BACKUP_DIR` | Backup folder (default `./backups`) |
+| `LOG_DIR` | Log folder (default `./logs/postgres`) |
 
 ## Operations
 
@@ -105,19 +127,25 @@ POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432
 docker compose ps
 docker compose logs -f postgres
 docker compose exec postgres psql -U appuser -d postgres
-docker compose down
+docker compose restart postgres
+docker compose down              # stops container, keeps data
 ```
 
-**Never run** `docker compose down -v` in production — it deletes all data.
+**Never run** `docker compose down -v` in production.
 
-## Backup
+## Project layout
 
-```bash
-docker compose exec -T postgres pg_dump -U appuser myapp | gzip > backup_myapp_$(date +%Y%m%d).sql.gz
+```text
+pgstack-prod/
+├── docker-compose.yml
+├── docs/BACKUP.md              # beginner backup/restore guide
+├── logs/postgres/              # persistent PostgreSQL log files
+├── backups/                    # backup .sql.gz files
+├── postgres/
+│   ├── conf/postgresql.conf
+│   └── init/01-extensions.sql
+└── scripts/
+    ├── backup.sh
+    ├── restore.sh
+    └── create-db.sh
 ```
-
-## SSL note
-
-PostgreSQL uses port **5432** with the `postgresql://` protocol — not HTTPS on port 443. DNS only resolves the hostname to your VPS IP.
-
-For encrypted connections, configure PostgreSQL SSL or use a VPN/SSH tunnel between your apps and the database server.
