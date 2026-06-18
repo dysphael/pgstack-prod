@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # View PostgreSQL log files.
 # Usage: ./scripts/overview/logs.sh
-#        ./scripts/logs.sh --tail [lines]
-#        ./scripts/logs.sh --list
+#        ./scripts/overview/logs.sh --tail [lines]
+#        ./scripts/overview/logs.sh --list
 
 set -euo pipefail
 source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"
@@ -28,8 +28,8 @@ case "${1:-}" in
         echo "=== ${LATEST} (last ${LINES} lines) ==="
         tail -n "$LINES" "$LATEST"
       else
-        echo "No log files in ${LOG_DIR}"
-        exit 1
+        echo "No log files in ${LOG_DIR} yet."
+        exit 0
       fi
     fi
     ;;
@@ -38,6 +38,6 @@ case "${1:-}" in
     echo ""
     "${0}" --list
     echo ""
-    "${0}" --tail 30
+    "${0}" --tail 30 || true
     ;;
 esac

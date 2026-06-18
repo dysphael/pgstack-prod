@@ -217,10 +217,10 @@ nano .env
 
 ### "database does not exist" when backing up
 
-Create the database first:
+Create the database first (with isolated users):
 
 ```bash
-docker compose exec postgres psql -U appuser -d postgres -c "CREATE DATABASE myapp;"
+./scripts/databases/create-db.sh myapp
 ```
 
 ### Restore says file not found
