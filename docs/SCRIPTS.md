@@ -15,7 +15,8 @@ pgstack-prod/
 │   ├── init.sh
 │   ├── common.sh
 │   ├── db-users.sh
-│   └── backups.sh
+│   ├── backups.sh
+│   └── ui.sh               # manager TUI (colors, boxes, picks)
 └── scripts/
     ├── overview/           # monitoring & logs
     ├── databases/          # create, list, drop
@@ -30,7 +31,24 @@ pgstack-prod/
 ./bin/manager.sh    # or ./manager.sh
 ```
 
-Interactive menu with 5 sections. Every option calls a CLI script below.
+Interactive colorized TUI with a live dashboard (PostgreSQL, databases, backups, Docker) and boxed menus. Every option calls a CLI script below — scripts in `scripts/` are unchanged.
+
+## Manager shortcuts
+
+| Key | Main menu | Submenu |
+|-----|-----------|---------|
+| `1`–`5` | Open section | — |
+| `1`–`6` | — | Run action (varies by section) |
+| `0` | Exit | Back to main menu |
+| `h` | — | Jump to main menu |
+| `?` | Help (paths + shortcuts) | Same |
+| `q` | Quit | Jump to main menu |
+
+After an action finishes, press **Enter** to return to the menu or **`h`** to jump straight to the main screen.
+
+Submenus show a breadcrumb (`▸ Main > Backups`) and a compact header with host, admin user, and online status. The ASCII banner appears once at startup; other screens use the compact header.
+
+Respects `NO_COLOR=1` and non-TTY output (plain text, no ANSI).
 
 ## CLI scripts
 

@@ -14,6 +14,38 @@ docker compose up -d         # creates folders and starts PostgreSQL
 ./bin/manager.sh              # interactive manager (or ./manager.sh)
 ```
 
+The manager is a colorized terminal UI with a live system dashboard, boxed menus, breadcrumbs, and keyboard shortcuts.
+
+```text
+ pgstack │ db.yourdomain.com │ blockway │ ● ONLINE
+ ▸ Main
+
+┌─ System ─────────────────────────────────────┐
+│ PostgreSQL   ● ONLINE   PG 16.14   up 2h    │
+│ Databases    2 project   myapp, test        │
+│ Backups      3 files (12M)   latest: ...    │
+│ Docker       postgres container: running    │
+│ Paths        backups/   logs/postgres/      │
+└──────────────────────────────────────────────┘
+
+┌─ Menu ─────────────────────────────────────┐
+  1) Overview              status, stats, logs
+  2) Databases             create, list, drop
+  ...
+└─────────────────────────────────────────────┘
+ [0] back/exit  [h] home  [?] help  [q] quit
+```
+
+| Key | Action |
+|-----|--------|
+| `1`–`5` | Open section |
+| `0` | Exit (main) or Back (submenu) |
+| `h` | Jump to main menu from any screen |
+| `?` | Show shortcuts and paths |
+| `q` | Quit (main) or Home (submenu) |
+
+After running an action: `[Enter]` continues, `[h]` returns to main menu.
+
 Or run individual scripts:
 
 ```bash
@@ -197,6 +229,7 @@ pgstack-prod/
 ├── bin/
 │   └── manager.sh              # interactive menu
 ├── lib/                        # shared helpers (internal)
+│   └── ui.sh                   # manager TUI helpers
 ├── scripts/
 │   ├── overview/               # status, stats, connections, logs
 │   ├── databases/              # create, list, drop, conn-info
