@@ -12,7 +12,7 @@ set_env
 USER="${1:-}"
 DB="${2:-}"
 HOST="${3:-${POSTGRES_HOST:-127.0.0.1}}"
-PORT="${4:-5432}"
+PORT="${4:-$(publish_host_port)}"
 PW="${PGSTACK_PASSWORD:-}"
 
 [[ -n "$USER" && -n "$DB" ]] || {
@@ -24,8 +24,12 @@ PW="${PGSTACK_PASSWORD:-}"
 if command -v psql >/dev/null 2>&1; then
   PGPASSWORD="$PW" psql -v ON_ERROR_STOP=1 -h "$HOST" -p "$PORT" -U "$USER" -d "$DB" \
     -c "SELECT current_user AS user, current_database() AS db;"
+elif [[ "$HOST" == "127.0.0.1" || "$HOST" == "localhost" ]]; then
+  docker run --rm --network host -e PGPASSWORD="$PW" postgres:16-alpine \
+    psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U "$USER" -d "$DB" \
+    -c "SELECT current_user AS user, current_database() AS db;"
 else
-  docker compose exec -T -e PGPASSWORD="$PW" postgres \
+  docker run --rm --network host -e PGPASSWORD="$PW" postgres:16-alpine \
     psql -v ON_ERROR_STOP=1 -h "$HOST" -p "$PORT" -U "$USER" -d "$DB" \
     -c "SELECT current_user AS user, current_database() AS db;"
 fi

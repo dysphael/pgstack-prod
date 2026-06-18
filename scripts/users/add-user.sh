@@ -23,7 +23,7 @@ set_env
 require_postgres
 db_exists "$DB" || { echo "ERROR: database '${DB}' not found." >&2; exit 1; }
 
-PW="$(prompt_password "$USER")"
+PW="$(resolve_app_password "$USER")"
 add_project_user "$DB" "$ACCESS" "$USER" "$PW"
 
 echo ""

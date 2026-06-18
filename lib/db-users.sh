@@ -34,16 +34,24 @@ db_owner() {
 }
 
 role_password_literal() {
-  local pw="$1" b64
-  b64="$(printf '%s' "$pw" | base64 | tr -d '\n')"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -tAc \
-    "SELECT quote_literal(convert_from(decode('${b64}', 'base64'), 'UTF8'));"
+  local pw="$1" b64 quoted
+  if base64 --help 2>/dev/null | grep -q -- '-w'; then
+    b64="$(printf '%s' "$pw" | base64 -w 0)"
+  else
+    b64="$(printf '%s' "$pw" | base64 | tr -d '\n')"
+  fi
+  quoted="$(docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -tAc \
+    "SELECT quote_literal(convert_from(decode('${b64}', 'base64'), 'UTF8'));")"
+  quoted="${quoted//$'\r'/}"
+  quoted="${quoted//$'\n'/}"
+  printf '%s' "$quoted"
 }
 
 ensure_role_login() {
   local role="$1" pw="$2" extra="${3:-}"
   local pw_lit op
   pw_lit="$(role_password_literal "$pw")"
+  [[ -n "$pw_lit" ]] || { echo "ERROR: failed to encode password." >&2; return 1; }
   if role_exists "$role"; then
     op="ALTER ROLE"
   else
@@ -57,18 +65,31 @@ set_role_password() {
   local role="$1" pw="$2"
   local pw_lit
   pw_lit="$(role_password_literal "$pw")"
+  [[ -n "$pw_lit" ]] || { echo "ERROR: failed to encode password." >&2; return 1; }
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
     -c "ALTER ROLE \"${role}\" WITH PASSWORD ${pw_lit};"
 }
 
+# Same TCP path remote apps use (published port + SCRAM). Trust on 127.0.0.1 inside the container is NOT tested.
 verify_role_login() {
   local user="$1" pw="$2" db="$3"
-  local ip
-  # 127.0.0.1 inside the container uses trust in default pg_hba — does not test the password.
-  ip="$(docker compose exec -T postgres hostname -i 2>/dev/null | awk '{print $1}')"
-  [[ -n "$ip" ]] || return 1
-  docker compose exec -T -e PGPASSWORD="$pw" postgres \
-    psql -v ON_ERROR_STOP=1 -h "$ip" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1
+  local port="${4:-$(publish_host_port)}"
+
+  if command -v psql >/dev/null 2>&1; then
+    PGPASSWORD="$pw" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1 && return 0
+  fi
+
+  docker run --rm --network host -e PGPASSWORD="$pw" postgres:16-alpine \
+    psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1
+}
+
+resolve_app_password() {
+  local role="$1"
+  if [[ -n "${PGSTACK_PASSWORD:-}" ]]; then
+    printf '%s' "$PGSTACK_PASSWORD"
+    return 0
+  fi
+  prompt_password "$role"
 }
 
 isolate_to_db() {
@@ -356,7 +377,7 @@ prompt_add_user_interactive() {
   read -r -p "Username: " user
   [[ -n "$user" ]] || return 1
 
-  pw="$(prompt_password "$user")"
+  pw="$(resolve_app_password "$user")"
   add_project_user "$db" "$access" "$user" "$pw"
   echo ""
   echo "OK — ${access} user '${user}' added"

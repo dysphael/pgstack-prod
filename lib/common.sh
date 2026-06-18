@@ -66,6 +66,18 @@ abs_path() {
   printf '%s/%s\n' "$ROOT" "$path"
 }
 
+# Host port from POSTGRES_PORT_PUBLISH (e.g. 5432:5432 or 127.0.0.1:5432:5432).
+publish_host_port() {
+  local spec="${POSTGRES_PORT_PUBLISH:-5432:5432}"
+  if [[ "$spec" =~ ^[0-9]+:[0-9]+$ ]]; then
+    printf '%s' "${spec%%:*}"
+  elif [[ "$spec" =~ :[0-9]+:[0-9]+$ ]]; then
+    printf '%s' "$(sed -E 's/.*:([0-9]+):[0-9]+$/\1/' <<<"$spec")"
+  else
+    printf '%s' "5432"
+  fi
+}
+
 # Usage: read_array VAR_NAME command [args...]
 # Fills a named array from command stdout (bash 3.2+ compatible).
 read_array() {
