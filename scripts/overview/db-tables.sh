@@ -11,7 +11,7 @@ DB="${1:-}"
 [[ -n "$DB" ]] || { echo "Usage: ./scripts/overview/db-tables.sh <database>" >&2; exit 1; }
 valid_db_name "$DB" || { echo "ERROR: invalid database name." >&2; exit 1; }
 
-echo "Tables in ${DB} (schema app):"
+echo "Tables in ${DB} (schema public):"
 echo ""
 
 TABLES_SQL="
@@ -21,7 +21,7 @@ SELECT
   pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
   n_live_tup::text AS rows
 FROM pg_stat_user_tables
-WHERE schemaname = 'app'
+WHERE schemaname = 'public'
 ORDER BY pg_total_relation_size(relid) DESC;
 "
 

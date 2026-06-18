@@ -74,35 +74,32 @@ db.yourdomain.com  →  YOUR_VPS_PUBLIC_IP
 
 Use the same hostname as `POSTGRES_HOST` in `.env`.
 
-## Application connection
+## The whole model: just databases
 
-Use the **project owner** user from `create-db.sh` — not `appuser`:
+Everything uses the default **`public`** schema. There is no "app" abstraction,
+no registry, and no manifest. The flow is:
 
 ```text
-postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
+create db  →  add user  →  backup  →  drop  →  restore  →  add user again
 ```
+
+- **Create** an empty database (`public` schema).
+- **Add a user** when you need one (e.g. the Django user) — owner / read / write / admin.
+- **Backup** produces a portable `.sql.gz` (`pg_dump --no-owner --no-acl`).
+- **Restore** drops and recreates the database, then loads the dump 100%.
+  It needs **no password, no manifest, no registry** — copy a `.sql.gz` from
+  another server and restore it directly.
+- After a restore, **add the app user again** (users are not part of backups).
 
 ## Create a project database
 
-Creates **only the database** (schema `app`). Users are **optional** — you choose if, when, and which to create.
+Creates **only the database** (schema `public`). Users are added separately.
 
 ```bash
 ./scripts/databases/create-db.sh myapp
 ```
 
-Flow:
-1. Creates database `myapp`
-2. Asks: **Add a user? (y/n)** — repeat as needed
-3. For each user: choose access → username → password
-
-| Access | What it can do |
-|--------|----------------|
-| `owner` | Read, write, delete, create tables (main app) |
-| `read` | Read only |
-| `write` | Read + write on tables |
-| `admin` | Create read/write users for this DB |
-
-**Add users later:**
+**Add a user** (owner is what an app like Django needs):
 
 ```bash
 ./scripts/users/add-user.sh myapp owner myapp_app
@@ -111,11 +108,22 @@ Flow:
 ./scripts/users/add-user.sh myapp admin myapp_admin
 ```
 
-**App connection (example):**
+| Access | What it can do |
+|--------|----------------|
+| `owner` | Read, write, delete, create tables, run migrations (main app) |
+| `read` | Read only |
+| `write` | Read + write on tables |
+| `admin` | Create read/write users for this DB |
+
+## Application connection
+
+Use the **owner** user you created — not the server admin:
 
 ```text
 postgresql://myapp_app:PASSWORD@db.yourdomain.com:5432/myapp
 ```
+
+The app connects to the default `public` schema; no `search_path` is needed.
 
 ## Logs (persistent files)
 
@@ -186,16 +194,17 @@ rm -rf ./data/postgres
 docker compose up -d
 ./scripts/overview/status.sh
 
-# Create DB + app user (password = same as DATABASE_URL in Django/.env)
+# Create the database, then the app user
+./scripts/databases/create-db.sh myapp
 PGSTACK_PASSWORD='your-app-password' \
-  ./scripts/setup/bootstrap-app.sh myapp myapp_api
+  ./scripts/users/add-user.sh myapp owner myapp_api
 
-# Verify remote-style login
+# Diagnose remote-style login if needed
 PGSTACK_PASSWORD='your-app-password' \
-  ./scripts/tools/test-conn.sh myapp_api myapp db.yourdomain.com 5432
+  ./scripts/tools/diagnose-user.sh myapp_api myapp
 ```
 
-> After wiping `data/postgres/`, **all roles and databases are gone**. The app user (`myapp_api`) must be recreated. `POSTGRES_USER` in `.env` is only the server admin, not your application user.
+> After wiping `data/postgres/`, **all roles and databases are gone**. The database and app user (`myapp_api`) must be recreated. `POSTGRES_USER` in `.env` is only the server admin, not your application user.
 
 **Migrate from old Docker volume** (`pgstack-prod_pgdata`):
 

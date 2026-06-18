@@ -1,8 +1,13 @@
-# Runbook — ciclo completo de apps
+# Runbook — ciclo completo (só databases)
 
-Guia plug-and-play para criar, fazer backup, apagar e restaurar bancos com a aplicação voltando ao normal.
+Guia plug-and-play para **criar, fazer backup, apagar e restaurar** bancos, com a
+aplicação voltando ao normal. Sem "Apps", sem registry, sem manifest, sem schema `app`.
 
-Use o **Manager** (`./bin/manager.sh`) — menu **Apps**.
+Tudo usa o schema padrão **`public`**. Use o **Manager** (`./bin/manager.sh`).
+
+```text
+Create DB  →  Add user  →  Backup  →  Drop  →  Restore  →  Add user de novo
+```
 
 ---
 
@@ -14,140 +19,117 @@ docker compose up -d
 ./scripts/overview/status.sh   # PostgreSQL: ready
 ```
 
-A senha do app deve ser **exatamente** a do `DATABASE_URL` no `.env` do Django (ou outro app).
+---
+
+## 1. Criar o banco
+
+**Manager → Databases → Create** (ou pela CLI):
+
+```bash
+./scripts/databases/create-db.sh myapp
+```
+
+Cria um banco **vazio** no schema `public` (com as extensões `uuid-ossp` e `pg_trgm`).
+Nenhum usuário é criado aqui.
 
 ---
 
-## 1. Primeira vez — Setup app
+## 2. Criar o usuário do app
 
-**Manager → Apps → Setup app**
+**Manager → Users → Add user** (ou pela CLI). Use a senha **exata** do
+`DATABASE_URL` do Django/app:
 
-| Campo | Exemplo |
-|-------|---------|
-| Database | `myapp` |
-| App user | `myapp_api` |
-| Label | `My App` (opcional) |
-| Password | senha do `DATABASE_URL` |
+```bash
+PGSTACK_PASSWORD='senha-do-DATABASE_URL' \
+  ./scripts/users/add-user.sh myapp owner myapp_api
+```
 
-O script cria o banco, schema `app`, usuário owner, isola acesso e **verifica login** antes de mostrar OK.
+O script cria o role, isola o acesso ao banco `myapp`, dá ownership total no
+`public` e **verifica o login** (estilo remoto/SCRAM) antes de mostrar OK.
 
-Depois no app:
+Depois, no app:
 
 ```bash
 python manage.py migrate
 python manage.py check
 ```
 
----
-
-## 2. Rotina — Backup
-
-**Manager → Apps → Backup app** → escolha `myapp`
-
-Gera dois arquivos em `data/backups/`:
-
-- `backup_myapp_YYYYMMDD_HHMMSS.sql.gz` — dados
-- `backup_myapp_YYYYMMDD_HHMMSS.manifest.json` — usuários e permissões
+`owner` assume a ownership das tabelas/sequences (inclusive após restore), então
+`migrate` e `ALTER TABLE` funcionam sem `permission denied`.
 
 ---
 
-## 3. Quando der problema — Restore
+## 3. Backup
 
-**Manager → Apps → Restore app**
+**Manager → Backups → Backup one** → escolha `myapp` (ou CLI):
 
-1. Escolha o app (`myapp`)
-2. Escolha o número do backup
-3. Digite a senha do `DATABASE_URL`
-4. Confirme com `YES`
+```bash
+./scripts/backups/backup.sh myapp        # um banco
+./scripts/backups/backup.sh              # todos
+```
+
+Gera um único arquivo **portátil** em `data/backups/`:
+
+```text
+backup_myapp_YYYYMMDD_HHMMSS.sql.gz
+```
+
+Feito com `pg_dump --no-owner --no-acl` — pode ser **copiado para outro servidor**
+e restaurado direto, sem depender de roles ou senhas.
+
+---
+
+## 4. Restaurar
+
+**Manager → Backups → Restore** (ou CLI):
+
+```bash
+./scripts/backups/restore.sh data/backups/backup_myapp_YYYYMMDD_HHMMSS.sql.gz
+# o nome do banco é inferido do arquivo; ou passe explícito:
+./scripts/backups/restore.sh data/backups/backup_myapp_...sql.gz myapp
+```
 
 O restore:
 
-- Limpa schema `app` (ou cria DB vazio se não existir)
-- Importa o backup
-- Recria usuários e grants
-- Sincroniza senha
-- **Verifica login** — se falhar, mostra erro (sem OK falso)
+1. Desconecta sessões abertas no banco
+2. **DROP DATABASE** + **CREATE DATABASE** (banco limpo)
+3. Carrega o dump **100%**
 
-Reinicie o app para limpar connection pools.
+Não pede senha, manifest nem registry. Funciona com qualquer `.sql.gz`, inclusive
+copiado de outro servidor.
 
----
+> Usuários **não** fazem parte do backup. Depois do restore, **recrie o usuário do app**
+> (passo 2): `add-user.sh myapp owner myapp_api`. Aí o Django conecta normalmente.
 
-## 4. Apagar banco
-
-**Manager → Apps → Drop app**
-
-- Por padrão faz **backup antes** de apagar
-- Confirme com `YES`
-- Usuários exclusivos do banco são removidos
-
-Para voltar: **Restore app** com o backup de segurança.
+Reinicie o app para limpar os connection pools.
 
 ---
 
-## 5. Verificar se está OK
+## 5. Apagar banco
 
-**Manager → Apps → Verify app**
-
-- Escolha o app
-- Senha do `DATABASE_URL`
-
-Mostra `PASS` só se login SCRAM + `search_path=app` + schema existirem.
-
-Use isso **antes** de culpar o Django.
-
----
-
-## CLI (SSH sem Manager)
+**Manager → Databases → Drop** (ou CLI):
 
 ```bash
-export PGSTACK_PASSWORD='senha-do-DATABASE_URL'
-
-./scripts/app.sh setup   myapp myapp_api "My App"
-./scripts/app.sh backup  myapp
-./scripts/app.sh verify  myapp
-
-# Restore após drop ou corrupção
-PGSTACK_YES=1 ./scripts/app.sh restore data/backups/backup_myapp_XXXXXX.sql.gz
-
-# Drop com backup automático
-PGSTACK_YES=1 ./scripts/app.sh drop myapp --backup-first
+./scripts/databases/drop-db.sh myapp
 ```
+
+Desconecta sessões e dá `DROP DATABASE`. **Não** mexe em roles. Confirme com `YES`
+(ou `PGSTACK_YES=1` para pular a confirmação).
+
+Para voltar: faça **Restore** com um backup.
 
 ---
 
-## Registro de apps
-
-Apps ficam em `data/apps/registry.json` (sem senha):
-
-```json
-{
-  "myapp": {
-    "user": "myapp_api",
-    "label": "My App"
-  }
-}
-```
-
----
-
-## Teste automatizado (servidor)
+## Copiar backup entre servidores
 
 ```bash
-./scripts/setup/test-app-lifecycle.sh
+# no servidor de origem
+scp data/backups/backup_myapp_*.sql.gz user@destino:~/pgstack-prod/data/backups/
+
+# no servidor de destino
+./scripts/backups/restore.sh data/backups/backup_myapp_*.sql.gz myapp
+./scripts/users/add-user.sh myapp owner myapp_api   # recria o user do app
 ```
-
-Roda: setup → backup → drop → restore → verify e limpa sozinho.
-
----
-
-## Recuperação rápida
-
-```
-Manager → Apps → Restore → myapp → último backup → senha → YES
-Manager → Apps → Verify → myapp
-```
-
-No Mac: `python manage.py check`
 
 ---
 
@@ -155,9 +137,15 @@ No Mac: `python manage.py check`
 
 | Sintoma | Ação |
 |---------|------|
-| `password authentication failed` | Apps → Verify; senha ≠ `.env` → Users → Reset password → From DATABASE_URL |
-| `schema app does not exist` | Apps → Restore ou Setup |
-| Restore OK mas app não conecta | Reinicie o app; rode Verify |
-| Sem backups na lista | Apps → Backup app primeiro |
+| `password authentication failed` | Senha ≠ `DATABASE_URL` → Users → Reset password → From DATABASE_URL |
+| `permission denied for table ...` | Recrie o user como `owner` (assume ownership): `add-user.sh <db> owner <user>` |
+| Restore OK mas app não conecta | Recrie o user do app; reinicie o app |
+| Sem backups na lista | Backups → Backup one primeiro |
+
+Diagnóstico de login:
+
+```bash
+PGSTACK_PASSWORD='...' ./scripts/tools/diagnose-user.sh myapp_api myapp
+```
 
 Mais detalhes: [BACKUP.md](BACKUP.md)

@@ -129,23 +129,24 @@ Or run scripts directly:
 
 ## `create-db.sh`
 
-Creates database + schema `app`. **Users are optional** — you choose each one interactively.
+Creates an **empty** database (default `public` schema). No users are created here.
 
 ```bash
 ./scripts/databases/create-db.sh myapp
 ```
 
-1. Creates `myapp`
-2. **Add a user? (y/n)** — for each user: access → username → password
+Add users with `add-user.sh`:
+
+```bash
+./scripts/users/add-user.sh myapp owner myapp_api
+```
 
 | Access | Role |
 |--------|------|
-| `owner` | Read, write, delete, create tables |
+| `owner` | Read, write, delete, create tables, run migrations |
 | `read` | Read only |
 | `write` | Read + write on tables |
 | `admin` | Create read/write users for this DB |
-
-Add users later with `add-user.sh`.
 
 ---
 

@@ -13,7 +13,7 @@ valid_db_name "$DB" || { echo "ERROR: invalid database name." >&2; exit 1; }
 
 HOST="${POSTGRES_HOST:-localhost}"
 
-echo "Connection strings for '${DB}' (schema: app):"
+echo "Connection strings for '${DB}' (schema: public):"
 echo ""
 
 CONN_SQL="

@@ -1,8 +1,14 @@
 # Backup & Restore Guide
 
-> **Plug-and-play (recomendado):** use o [RUNBOOK.md](RUNBOOK.md) — menu **Apps** no Manager ou `./scripts/app.sh`.
+> **Plug-and-play (recomendado):** use o [RUNBOOK.md](RUNBOOK.md) — menu **Backups** no Manager.
 
 A step-by-step guide for beginners. No prior database experience required.
+
+Backups are **portable**: a `.sql.gz` is created with `pg_dump --no-owner --no-acl`,
+so you can copy it to another server and restore it directly. Restore drops and
+recreates the database and loads the dump 100% — **no password, manifest, or
+registry needed**. Users are not part of a backup; recreate the app user after a
+restore (see step 4).
 
 ---
 
@@ -76,20 +82,9 @@ data/backups/backup_myapp_20260115_030000.sql.gz   2.4M
 
 ## How to restore a backup
 
-**Warning:** restoring **replaces** the current data in that database. Always make a fresh backup before restoring if you are unsure.
+**Warning:** restoring **drops and recreates** the database — all current data in it is replaced. Always make a fresh backup before restoring if you are unsure.
 
-Each backup now includes a **manifest** (`.manifest.json`) with database owner and user access levels. Restore recreates users, syncs password, and verifies app login.
-
-### Recommended — Apps menu or app.sh
-
-```bash
-export PGSTACK_PASSWORD='exact-password-from-DATABASE_URL'
-./scripts/app.sh restore data/backups/backup_myapp_20260115_030000.sql.gz myapp
-```
-
-Or: **Manager → Apps → Restore app** (guided wizard).
-
-### Manual — restore.sh
+Restore needs **no password, manifest, or registry**. It works with any `.sql.gz`, including a file copied from another server.
 
 ### Step 1 — find your backup file
 
@@ -106,16 +101,13 @@ data/backups/backup_myapp_20260115_030000.sql.gz
 ### Step 2 — run the restore
 
 ```bash
-PGSTACK_PASSWORD='your-app-password' ./scripts/backups/restore.sh data/backups/backup_myapp_20260115_030000.sql.gz myapp
+./scripts/backups/restore.sh data/backups/backup_myapp_20260115_030000.sql.gz myapp
 ```
 
-`PGSTACK_PASSWORD` must match your app `DATABASE_URL` password. Without it, restore will fail.
+The database name is optional — it's inferred from the filename. Replace `myapp`
+with your real database name if you pass it explicitly.
 
-Replace:
-- the filename with your real backup file
-- `myapp` with your real database name
-
-Optional third argument: owner username if not in registry/manifest.
+Or use the guided wizard: **Manager → Backups → Restore**.
 
 ### Step 3 — confirm
 
@@ -125,17 +117,24 @@ The script will ask:
 Type YES to continue:
 ```
 
-Type exactly `YES` and press Enter.
+Type exactly `YES` and press Enter. (Set `PGSTACK_YES=1` to skip the prompt in scripts.)
 
-### Step 4 — verify
+The script then drops the database, recreates it, and loads the dump 100%.
+
+### Step 4 — recreate the app user
+
+Users are not part of the backup. Recreate the app user (use the exact password
+from your app `DATABASE_URL`):
 
 ```bash
-PGSTACK_PASSWORD='your-app-password' ./scripts/app.sh verify myapp
+PGSTACK_PASSWORD='your-app-password' ./scripts/users/add-user.sh myapp owner myapp_api
 ```
 
-Or **Manager → Apps → Verify app**.
+Then point your app at that user and restart it. Verify login if needed:
 
-This checks SCRAM login and `search_path=app` — not just admin access.
+```bash
+PGSTACK_PASSWORD='your-app-password' ./scripts/tools/diagnose-user.sh myapp_api myapp
+```
 
 ---
 
@@ -238,7 +237,7 @@ nano .env
 
 ### "database does not exist" when backing up
 
-Create the database first (with isolated users):
+Create the database first:
 
 ```bash
 ./scripts/databases/create-db.sh myapp
@@ -262,12 +261,14 @@ docker compose logs postgres
 
 | Task | Command |
 |------|---------|
+| Create DB | `./scripts/databases/create-db.sh myapp` |
+| Add app user | `PGSTACK_PASSWORD='...' ./scripts/users/add-user.sh myapp owner myapp_api` |
 | Backup one DB | `./scripts/backups/backup.sh myapp` |
 | Backup all DBs | `./scripts/backups/backup.sh` |
 | List backups | `./scripts/backups/list-backups.sh` |
-| Restore (app-ready) | `PGSTACK_PASSWORD='...' ./scripts/app.sh restore data/backups/FILE.sql.gz myapp` |
-| Restore (script) | `PGSTACK_PASSWORD='...' ./scripts/backups/restore.sh data/backups/FILE.sql.gz myapp` |
-| Verify app | `PGSTACK_PASSWORD='...' ./scripts/app.sh verify myapp` |
+| Restore | `./scripts/backups/restore.sh data/backups/FILE.sql.gz myapp` |
+| Drop DB | `./scripts/databases/drop-db.sh myapp` |
+| Diagnose user | `PGSTACK_PASSWORD='...' ./scripts/tools/diagnose-user.sh myapp_api myapp` |
 
 ---
 

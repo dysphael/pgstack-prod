@@ -17,10 +17,6 @@ backup_db() {
   docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" --no-owner --no-acl -d "$db" | gzip > "$file"
   [[ -s "$file" ]] || { rm -f "$file"; echo "ERROR: backup failed." >&2; exit 1; }
   echo "OK ${file} ($(du -h "$file" | cut -f1))"
-  # shellcheck disable=SC1091
-  source "${ROOT}/lib/db-users.sh"
-  source "${ROOT}/lib/app-lifecycle.sh"
-  write_backup_manifest "$db" "$file"
 }
 
 [[ "$TARGET" == "--list" || "$TARGET" == "-l" ]] && exec "$(dirname "$0")/list-backups.sh"

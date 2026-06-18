@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Create an isolated project database. Users are optional.
+# Create an empty project database (schema: public).
+# Users are added separately with: ./scripts/users/add-user.sh
 #
 # Usage: ./scripts/databases/create-db.sh <database>
 
@@ -16,10 +17,11 @@ require_postgres
 db_exists "$DB" && { echo "ERROR: database '${DB}' already exists." >&2; exit 1; }
 
 echo "Creating database '${DB}'..."
-echo "Users are optional — you will be asked if you want to add any."
-
 create_project_database "$DB" "$POSTGRES_USER"
-setup_project_schema "$DB" "$POSTGRES_USER"
+ensure_common_extensions "$DB"
 
-interactive_add_users "$DB"
-print_db_summary "$DB"
+echo ""
+echo "OK — database '${DB}' ready (schema: public)"
+echo ""
+echo "Add a user (e.g. the Django user):"
+echo "  ./scripts/users/add-user.sh ${DB} owner <username>"

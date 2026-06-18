@@ -45,13 +45,6 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc \
   "SELECT CASE WHEN has_database_privilege('${USER}', '${DB}', 'CONNECT')
     THEN 'OK   CONNECT on ${DB}' ELSE 'FAIL no CONNECT on ${DB}' END;"
 
-if schema_app_exists "$DB"; then
-  echo "OK   schema 'app' exists"
-else
-  echo "FAIL schema 'app' missing"
-  echo "Fix: ./scripts/users/add-user.sh ${DB} owner ${USER}"
-fi
-
 echo ""
 echo "Databases with access:"
 databases_for_role "$USER" | sed 's/^/  /' || echo "  (none)"

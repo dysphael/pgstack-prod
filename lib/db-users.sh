@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Shared helpers for per-database user roles.
+# Shared helpers for databases and per-database user roles.
+# Standard layout: one database, default schema "public" (no forced schema).
 
 prompt_password() {
   local role="$1"
@@ -33,6 +34,7 @@ db_owner() {
     "SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${db}'"
 }
 
+# Safely quote a password literal regardless of special characters.
 role_password_literal() {
   local pw="$1" b64 quoted
   if base64 --help 2>/dev/null | grep -q -- '-w'; then
@@ -70,7 +72,7 @@ set_role_password() {
     -c "ALTER ROLE \"${role}\" WITH PASSWORD ${pw_lit};"
 }
 
-# Same TCP path remote apps use (SCRAM). Tries container IP first (no trust), then published port.
+# Verify a role can log in over TCP the same way remote apps do (SCRAM).
 verify_role_login() {
   local user="$1" pw="$2" db="$3"
   local port ip attempt
@@ -94,34 +96,6 @@ verify_role_login() {
   return 1
 }
 
-# Login + search_path + schema app (full app readiness check).
-confirm_project_user() {
-  local user="$1" pw="$2" db="$3"
-  local port path
-
-  port="$(publish_host_port)"
-  verify_role_login "$user" "$pw" "$db" || return 1
-
-  if command -v psql >/dev/null 2>&1; then
-    path="$(PGPASSWORD="$pw" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SHOW search_path;")"
-  else
-    path="$(docker run --rm --network host -e PGPASSWORD="$pw" postgres:16-alpine \
-      psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SHOW search_path;")"
-  fi
-  path="${path//$'\r'/}"
-  path="${path//$'\n'/}"
-  [[ "$path" == *app* ]] || {
-    echo "ERROR: search_path for '${user}' does not include schema 'app' (got: ${path})." >&2
-    return 1
-  }
-
-  schema_app_exists "$db" || {
-    echo "ERROR: schema 'app' missing in '${db}'." >&2
-    return 1
-  }
-  return 0
-}
-
 resolve_app_password() {
   local role="$1"
   # Manager UI always prompts — ignore PGSTACK_PASSWORD from the shell.
@@ -136,6 +110,24 @@ resolve_app_password() {
   prompt_password "$role"
 }
 
+create_project_database() {
+  local db="$1" owner="$2"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
+SELECT format('CREATE DATABASE %I OWNER %I', '${db}', '${owner}')
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db}')\gexec
+SQL
+}
+
+# Common, harmless extensions so app migrations don't fail.
+ensure_common_extensions() {
+  local db="$1"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+SQL
+}
+
+# Restrict a role to a single database (revoke access elsewhere).
 isolate_to_db() {
   local db="$1" role="$2"
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
@@ -161,175 +153,40 @@ REVOKE CONNECT ON DATABASE postgres FROM ${role};
 SQL
 }
 
-schema_app_exists() {
-  local db="$1"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" -tAc \
-    "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'app'" | grep -q 1
-}
-
-ensure_project_schema_if_missing() {
-  local db="$1" owner="$2"
-  if schema_app_exists "$db"; then
-    return 0
-  fi
-  echo "Schema 'app' not found in '${db}' — creating project schema..."
-  setup_project_schema "$db" "$owner"
-}
-
-setup_project_schema() {
-  local db="$1" owner="$2"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
--- Session override: DB/role may have search_path=app before schema exists.
-SET search_path = public, pg_catalog;
-
-CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION ${owner};
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" SCHEMA public;
-CREATE EXTENSION IF NOT EXISTS "pg_trgm" SCHEMA public;
-
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM ${owner};
-GRANT USAGE ON SCHEMA public TO ${owner};
-
-GRANT ALL ON SCHEMA app TO ${owner};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA app
-  GRANT ALL ON TABLES TO ${owner};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA app
-  GRANT ALL ON SEQUENCES TO ${owner};
-
-ALTER ROLE ${owner} SET search_path = app;
-
-CREATE OR REPLACE FUNCTION app.provision_user(
-  p_username text,
-  p_access text,
-  p_password text
-) RETURNS text
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = app, pg_catalog
-AS \$\$
-DECLARE
-  v_db text := current_database();
-  other_db text;
-BEGIN
-  IF p_access NOT IN ('read', 'write') THEN
-    RAISE EXCEPTION 'access must be read or write';
-  END IF;
-
-  IF p_username !~ '^[a-z][a-z0-9_]*\$' THEN
-    RAISE EXCEPTION 'invalid username';
-  END IF;
-
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = p_username) THEN
-    EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT', p_username, p_password);
-  ELSE
-    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', p_username, p_password);
-  END IF;
-
-  EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', v_db);
-  EXECUTE format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO %I', v_db, p_username);
-
-  FOR other_db IN
-    SELECT datname FROM pg_database
-    WHERE datistemplate = false AND datname <> v_db
-  LOOP
-    EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM %I', other_db, p_username);
-  END LOOP;
-
-  EXECUTE format('GRANT USAGE ON SCHEMA app TO %I', p_username);
-
-  IF p_access = 'read' THEN
-    EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA app TO %I', p_username);
-    EXECUTE format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA app TO %I', p_username);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT SELECT ON TABLES TO %I', '${owner}', p_username);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT SELECT ON SEQUENCES TO %I', '${owner}', p_username);
-  ELSE
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO %I', p_username);
-    EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO %I', p_username);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', '${owner}', p_username);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT USAGE, SELECT ON SEQUENCES TO %I', '${owner}', p_username);
-  END IF;
-
-  EXECUTE format('ALTER ROLE %I SET search_path = app', p_username);
-  RETURN format('postgresql://%s:PASSWORD@HOST:5432/%s', p_username, v_db);
-END;
-\$\$;
-
-REVOKE ALL ON FUNCTION app.provision_user(text, text, text) FROM PUBLIC;
-SQL
-}
-
-grant_db_admin() {
-  local db="$1" admin="$2"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
-GRANT EXECUTE ON FUNCTION app.provision_user(text, text, text) TO ${admin};
-SQL
-}
-
-grant_read_access() {
-  local db="$1" owner="$2" user="$3"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
-GRANT USAGE ON SCHEMA app TO ${user};
-GRANT SELECT ON ALL TABLES IN SCHEMA app TO ${user};
-GRANT SELECT ON ALL SEQUENCES IN SCHEMA app TO ${user};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA app
-  GRANT SELECT ON TABLES TO ${user};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA app
-  GRANT SELECT ON SEQUENCES TO ${user};
-ALTER ROLE ${user} SET search_path = app;
-SQL
-}
-
-grant_write_access() {
-  local db="$1" owner="$2" user="$3"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
-GRANT USAGE ON SCHEMA app TO ${user};
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO ${user};
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO ${user};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA app
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${user};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA app
-  GRANT USAGE, SELECT ON SEQUENCES TO ${user};
-ALTER ROLE ${user} SET search_path = app;
-SQL
-}
-
-create_project_database() {
-  local db="$1" owner="$2"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
-SELECT format('CREATE DATABASE %I OWNER %I', '${db}', '${owner}')
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db}')\gexec
-SQL
-}
-
+# Full ownership of everything in public, including objects loaded by a restore.
 grant_owner_access() {
   local db="$1" user="$2"
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
-GRANT ALL ON SCHEMA app TO ${user};
-GRANT ALL ON ALL TABLES IN SCHEMA app TO ${user};
-GRANT ALL ON ALL SEQUENCES IN SCHEMA app TO ${user};
-GRANT ALL ON ALL FUNCTIONS IN SCHEMA app TO ${user};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${user} IN SCHEMA app
-  GRANT ALL ON TABLES TO ${user};
-ALTER DEFAULT PRIVILEGES FOR ROLE ${user} IN SCHEMA app
-  GRANT ALL ON SEQUENCES TO ${user};
-ALTER ROLE ${user} SET search_path = app;
-ALTER SCHEMA app OWNER TO ${user};
+GRANT ALL ON SCHEMA public TO ${user};
+GRANT ALL ON ALL TABLES IN SCHEMA public TO ${user};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${user};
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO ${user};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${user};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${user};
+ALTER ROLE ${user} RESET search_path;
 
+-- Take ownership of objects created by the admin (e.g. after a restore),
+-- so the app can run migrations / ALTER TABLE.
+ALTER SCHEMA public OWNER TO ${user};
 DO \$\$
 DECLARE r record;
 BEGIN
-  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'app'
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
   LOOP
-    EXECUTE format('ALTER TABLE app.%I OWNER TO %I', r.tablename, '${user}');
+    EXECUTE format('ALTER TABLE public.%I OWNER TO %I', r.tablename, '${user}');
   END LOOP;
   FOR r IN
     SELECT c.relname AS seq
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'app' AND c.relkind = 'S'
+    WHERE n.nspname = 'public' AND c.relkind = 'S'
   LOOP
-    EXECUTE format('ALTER SEQUENCE app.%I OWNER TO %I', r.seq, '${user}');
+    EXECUTE format('ALTER SEQUENCE public.%I OWNER TO %I', r.seq, '${user}');
+  END LOOP;
+  FOR r IN
+    SELECT viewname FROM pg_views WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('ALTER VIEW public.%I OWNER TO %I', r.viewname, '${user}');
   END LOOP;
 END \$\$;
 SQL
@@ -337,10 +194,35 @@ SQL
     -c "ALTER DATABASE ${db} OWNER TO ${user};"
 }
 
+grant_read_access() {
+  local db="$1" user="$2"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
+GRANT USAGE ON SCHEMA public TO ${user};
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${user};
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO ${user};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ${user};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO ${user};
+ALTER ROLE ${user} RESET search_path;
+SQL
+}
+
+grant_write_access() {
+  local db="$1" user="$2"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
+GRANT USAGE ON SCHEMA public TO ${user};
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${user};
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${user};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${user};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${user};
+ALTER ROLE ${user} RESET search_path;
+SQL
+}
+
 valid_access_type() {
   [[ "${1:-}" =~ ^(owner|read|write|admin)$ ]]
 }
 
+# Add or update a user with a given access level on a database.
 add_project_user() {
   local db="$1" access="$2" user="$3" pw="$4"
   local schema_owner
@@ -359,123 +241,39 @@ add_project_user() {
       fi
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
-      ensure_project_schema_if_missing "$db" "$user"
       grant_owner_access "$db" "$user"
       ;;
     read)
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
-      ensure_project_schema_if_missing "$db" "$schema_owner"
-      grant_read_access "$db" "$schema_owner" "$user"
+      grant_read_access "$db" "$user"
       ;;
     write)
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
-      ensure_project_schema_if_missing "$db" "$schema_owner"
-      grant_write_access "$db" "$schema_owner" "$user"
+      grant_write_access "$db" "$user"
       ;;
     admin)
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
-      ensure_project_schema_if_missing "$db" "$schema_owner"
-      grant_db_admin "$db" "$user"
+      grant_write_access "$db" "$user"
       ;;
   esac
 
-  if ! confirm_project_user "$user" "$pw" "$db"; then
+  if ! verify_role_login "$user" "$pw" "$db"; then
     echo "" >&2
-    echo "ERROR: user '${user}' was configured but verification FAILED." >&2
+    echo "ERROR: user '${user}' was configured but login verification FAILED." >&2
     echo "Use the EXACT password from your app DATABASE_URL:" >&2
     echo "  PGSTACK_PASSWORD='...' ./scripts/users/set-password.sh ${user}" >&2
     return 1
   fi
-  echo "OK — '${user}' verified on '${db}' (login + schema app)"
+  echo "OK — '${user}' verified on '${db}' (remote-style login)"
 }
 
 print_connection_string() {
   local user="$1" db="$2"
   local host="${POSTGRES_HOST:-localhost}"
   echo "postgresql://${user}:PASSWORD@${host}:5432/${db}"
-}
-
-print_db_summary() {
-  local db="$1"
-  echo ""
-  echo "OK — database '${db}' ready (schema: app)"
-  echo ""
-  echo "Add users anytime:"
-  echo "  ./scripts/users/add-user.sh ${db} <owner|read|write|admin> USERNAME"
-  echo ""
-  echo "Users with access:"
-  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc "
-    SELECT r.rolname
-    FROM pg_roles r
-    WHERE r.rolcanlogin AND NOT r.rolsuper
-      AND r.rolname <> '${POSTGRES_USER}'
-      AND has_database_privilege(r.rolname, '${db}', 'CONNECT')
-    ORDER BY r.rolname;
-  " | while read -r u; do
-    [[ -n "$u" ]] && echo "  $(print_connection_string "$u" "$db")"
-  done
-  echo ""
-  echo "Server admin ${POSTGRES_USER} is for management only — not for apps."
-}
-
-prompt_add_user_interactive() {
-  local db="$1"
-  local access user pw choice
-
-  echo ""
-  echo "Access types:"
-  echo "  1) owner — read, write, delete, create tables"
-  echo "  2) read   — read only"
-  echo "  3) write  — read + write on tables"
-  echo "  4) admin  — create read/write users for this DB"
-  echo "  0) cancel"
-  read -r -p "Access: " choice
-
-  case "$choice" in
-    1) access="owner" ;;
-    2) access="read" ;;
-    3) access="write" ;;
-    4) access="admin" ;;
-    0|"") return 1 ;;
-    *) echo "Invalid choice." >&2; return 1 ;;
-  esac
-
-  read -r -p "Username: " user
-  [[ -n "$user" ]] || return 1
-
-  pw="$(resolve_app_password "$user")"
-  add_project_user "$db" "$access" "$user" "$pw" || return 1
-  echo ""
-  echo "OK — ${access} user '${user}' added"
-  print_connection_string "$user" "$db"
-}
-
-interactive_add_users() {
-  local db="$1" answer added=0
-
-  echo ""
-  echo "Users are optional. You choose access, username, and password for each."
-  echo "Tip: set PGSTACK_PASSWORD to your DATABASE_URL password for exact match (no typos):"
-  echo "  PGSTACK_PASSWORD='...' ./scripts/databases/create-db.sh ${db}"
-  echo "Or use bootstrap: PGSTACK_PASSWORD='...' ./scripts/setup/bootstrap-app.sh ${db} USER"
-  while true; do
-    read -r -p "Add a user? (y/n): " answer
-    [[ "$answer" =~ ^[yY] ]] || break
-    if prompt_add_user_interactive "$db"; then
-      added=$((added + 1))
-    fi
-    echo ""
-  done
-
-  if [[ "$added" -eq 0 ]]; then
-    echo ""
-    echo "WARNING: no users added — apps (Django, etc.) cannot connect yet."
-    echo "Add one now:"
-    echo "  PGSTACK_PASSWORD='...' ./scripts/users/add-user.sh ${db} owner YOUR_USER"
-  fi
 }
 
 # Login roles with CONNECT on a database (project users only).
@@ -492,73 +290,7 @@ users_for_database() {
   "
 }
 
-# True when role has privileges on only this non-template database.
-role_exclusive_to_db() {
-  local user="$1" db="$2"
-  local dbs count
-  dbs="$(databases_for_role "$user")"
-  count="$(printf '%s\n' "$dbs" | sed '/^$/d' | wc -l | tr -d ' ')"
-  [[ "$count" -eq 1 ]] && printf '%s\n' "$dbs" | grep -qx "$db"
-}
-
-reassign_db_owner_to_admin() {
-  local db="$1"
-  local owner
-  owner="$(db_owner "$db")"
-  [[ -n "$owner" && "$owner" != "$POSTGRES_USER" ]] || return 0
-  echo "Reassigning database owner from '${owner}' to '${POSTGRES_USER}'..."
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
-    -c "ALTER DATABASE ${db} OWNER TO ${POSTGRES_USER};"
-}
-
-terminate_db_connections() {
-  local db="$1"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
-SELECT pg_terminate_backend(pid)
-FROM pg_stat_activity
-WHERE datname = '${db}' AND pid <> pg_backend_pid();
-SQL
-}
-
-revoke_user_from_database() {
-  local db="$1" user="$2"
-  revoke_app_grants "$db" "$user" || true
-  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=0 \
-    -c "DROP OWNED BY ${user};" || true
-  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=0 -c \
-    "REVOKE ALL PRIVILEGES ON DATABASE ${db} FROM ${user};
-     REVOKE CONNECT ON DATABASE ${db} FROM ${user};" || true
-}
-
-drop_role() {
-  local user="$1"
-  role_exists "$user" || return 0
-  teardown_user_grants "$user"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
-    -c "DROP ROLE ${user};"
-}
-
-prepare_database_drop() {
-  local db="$1"
-  local user others
-
-  terminate_db_connections "$db"
-  reassign_db_owner_to_admin "$db"
-
-  while IFS= read -r user; do
-    [[ -z "$user" ]] && continue
-    if role_exclusive_to_db "$user" "$db"; then
-      echo "Cleaning up user '${user}' (exclusive to '${db}')..."
-      revoke_user_from_database "$db" "$user"
-    else
-      others="$(databases_for_role "$user" | grep -vx "$db" | paste -sd ', ' - || true)"
-      echo "Revoking '${user}' from '${db}' (kept — also has: ${others:-other databases})..."
-      revoke_user_from_database "$db" "$user"
-    fi
-  done < <(users_for_database "$db")
-}
-
-# List project databases where a role has CONNECT (or any) privilege.
+# List project databases where a role has CONNECT (or CREATE) privilege.
 databases_for_role() {
   local user="$1"
   docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc "
@@ -573,139 +305,16 @@ databases_for_role() {
   "
 }
 
-wipe_database_for_restore() {
+terminate_db_connections() {
   local db="$1"
-  terminate_db_connections "$db"
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" \
-    -c "DROP SCHEMA IF EXISTS app CASCADE;"
-}
-
-# Infer access level for a project user on a database.
-user_access_type() {
-  local db="$1" user="$2"
-  local owner is_admin has_insert
-
-  owner="$(db_owner "$db")"
-  if [[ "$user" == "$owner" && "$owner" != "$POSTGRES_USER" ]]; then
-    echo owner
-    return 0
-  fi
-
-  is_admin="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -tAc \
-    "SELECT rolcreaterole::text FROM pg_roles WHERE rolname='${user}';" 2>/dev/null | tr -d '\r\n')"
-  if [[ "$is_admin" == "t" ]]; then
-    echo admin
-    return 0
-  fi
-
-  if ! schema_app_exists "$db"; then
-    echo write
-    return 0
-  fi
-
-  has_insert="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -tAc \
-    "SELECT EXISTS(
-      SELECT 1 FROM pg_tables t
-      WHERE t.schemaname = 'app'
-        AND has_table_privilege('${user}', 'app.'||quote_ident(t.tablename), 'INSERT')
-    );" 2>/dev/null | tr -d '\r\n')"
-  if [[ "$has_insert" == "t" ]]; then
-    echo write
-  else
-    echo read
-  fi
-}
-
-# Lines: username:access (one per project user with CONNECT on db).
-snapshot_database_users() {
-  local db="$1" user access
-  while IFS= read -r user; do
-    [[ -z "$user" ]] && continue
-    access="$(user_access_type "$db" "$user")"
-    printf '%s:%s\n' "$user" "$access"
-  done < <(users_for_database "$db")
-}
-
-# Re-apply grants after restore (schema already exists). Does not create schema.
-ensure_app_user_after_restore() {
-  local db="$1" user="$2" access="$3" pw="$4"
-  local schema_owner
-
-  valid_access_type "$access" || access="write"
-  schema_owner="$(db_owner "$db")"
-  [[ -n "$schema_owner" ]] || { echo "ERROR: database '${db}' not found." >&2; return 1; }
-
-  case "$access" in
-    owner)
-      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
-      isolate_to_db "$db" "$user"
-      grant_owner_access "$db" "$user"
-      ;;
-    admin)
-      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT"
-      isolate_to_db "$db" "$user"
-      grant_db_admin "$db" "$user"
-      grant_write_access "$db" "$schema_owner" "$user"
-      ;;
-    read)
-      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
-      isolate_to_db "$db" "$user"
-      grant_read_access "$db" "$schema_owner" "$user"
-      ;;
-    write)
-      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
-      isolate_to_db "$db" "$user"
-      grant_write_access "$db" "$schema_owner" "$user"
-      ;;
-  esac
-}
-
-# users_spec: "user:access" entries (one per line or array elements).
-regrant_users_with_access() {
-  local db="$1" owner_pw="$2"
-  shift 2
-  local entries=("$@") entry user access
-
-  for entry in "${entries[@]}"; do
-    [[ -z "$entry" ]] && continue
-    user="${entry%%:*}"
-    access="${entry#*:}"
-    [[ "$user" == "$access" ]] && access="$(user_access_type "$db" "$user")"
-    echo "Re-applying ${access} access for '${user}'..."
-    ensure_app_user_after_restore "$db" "$user" "$access" "$owner_pw"
-  done
-}
-
-regrant_database_users_after_restore() {
-  local db="$1" db_owner_name="$2"
-  shift 2
-  local users=("$@") user access entries=()
-
-  for user in "${users[@]}"; do
-    [[ -z "$user" ]] && continue
-    if [[ "$user" == "$db_owner_name" && "$db_owner_name" != "$POSTGRES_USER" ]]; then
-      access="owner"
-    else
-      access="$(user_access_type "$db" "$user")"
-    fi
-    entries+=("${user}:${access}")
-  done
-
-  regrant_users_with_access "$db" "${PGSTACK_PASSWORD:-changeme}" "${entries[@]}"
-}
-
-revoke_app_grants() {
-  local db="$1" user="$2"
-  schema_app_exists "$db" || return 0
-  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=1 <<SQL
-REVOKE ALL ON SCHEMA app FROM ${user};
-REVOKE ALL ON ALL TABLES IN SCHEMA app FROM ${user};
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA app FROM ${user};
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA app FROM ${user};
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<SQL
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE datname = '${db}' AND pid <> pg_backend_pid();
 SQL
 }
 
-# Revoke grants and drop objects owned by role in every database, then global.
+# Revoke privileges and drop objects owned by a role across all databases.
 teardown_user_grants() {
   local user="$1"
   local db
@@ -714,7 +323,6 @@ teardown_user_grants() {
 
   while IFS= read -r db; do
     [[ -z "$db" ]] && continue
-    revoke_app_grants "$db" "$user" || true
     docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -v ON_ERROR_STOP=0 \
       -c "DROP OWNED BY ${user};" || true
   done < <(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc \
