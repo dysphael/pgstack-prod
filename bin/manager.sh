@@ -29,7 +29,10 @@ run() {
 pause_continue() {
   local prc=0
   ui_pause || prc=$?
-  [[ $prc -eq 2 ]] && GO_HOME=1
+  if [[ $prc -eq 2 ]]; then
+    GO_HOME=1
+  fi
+  return 0
 }
 
 run_action() {
@@ -39,6 +42,18 @@ run_action() {
   ui_action_header "$title"
   "$@" || true
   pause_continue
+  return 0
+}
+
+# require postgres, then run_action; pause once on auth/offline errors.
+run_db_action() {
+  local title="$1"
+  shift
+  if require_db_action; then
+    run_action "$title" "$@"
+  else
+    pause_continue
+  fi
 }
 
 require_db_action() {
@@ -202,10 +217,10 @@ submenu_overview() {
 
     case "$c" in
       1) run_action "Status" run overview status.sh ;;
-      2) require_db_action && run_action "Database stats" run overview db-stats.sh || pause_continue ;;
-      3) require_db_action && run_action "Connections" action_connections || pause_continue ;;
-      4) require_db_action && run_action "Table sizes" action_tables || pause_continue ;;
-      5) require_db_action && run_action "Slow queries" run overview slow-queries.sh || pause_continue ;;
+      2) run_db_action "Database stats" run overview db-stats.sh ;;
+      3) run_db_action "Connections" action_connections ;;
+      4) run_db_action "Table sizes" action_tables ;;
+      5) run_db_action "Slow queries" run overview slow-queries.sh ;;
       6) run_action "Logs" run overview logs.sh ;;
       0) return 0 ;;
       *) ui_invalid; pause_continue ;;
@@ -228,10 +243,10 @@ submenu_databases() {
     handle_nav_input "$c" 0 && { [[ $GO_HOME -eq 1 ]] && return 0; continue; }
 
     case "$c" in
-      1) require_db_action && run_action "List databases" run databases list-dbs.sh || pause_continue ;;
-      2) require_db_action && run_action "Create database" action_create_db || pause_continue ;;
-      3) require_db_action && run_action "Drop database" action_drop_db || pause_continue ;;
-      4) require_db_action && run_action "Connection strings" action_conn_info || pause_continue ;;
+      1) run_db_action "List databases" run databases list-dbs.sh ;;
+      2) run_db_action "Create database" action_create_db ;;
+      3) run_db_action "Drop database" action_drop_db ;;
+      4) run_db_action "Connection strings" action_conn_info ;;
       0) return 0 ;;
       *) ui_invalid; pause_continue ;;
     esac
@@ -254,9 +269,9 @@ submenu_users() {
 
     case "$c" in
       1) run_action "Users & access" action_list_access ;;
-      2) require_db_action && run_action "Add user" action_add_user || pause_continue ;;
-      3) require_db_action && run_action "Reset password" action_reset_password || pause_continue ;;
-      4) require_db_action && run_action "Drop user" action_drop_user || pause_continue ;;
+      2) run_db_action "Add user" action_add_user ;;
+      3) run_db_action "Reset password" action_reset_password ;;
+      4) run_db_action "Drop user" action_drop_user ;;
       0) return 0 ;;
       *) ui_invalid; pause_continue ;;
     esac
@@ -278,10 +293,10 @@ submenu_backups() {
     handle_nav_input "$c" 0 && { [[ $GO_HOME -eq 1 ]] && return 0; continue; }
 
     case "$c" in
-      1) require_db_action && run_action "Backup" action_backup_one || pause_continue ;;
-      2) require_db_action && run_action "Backup all" run backups backup.sh || pause_continue ;;
+      1) run_db_action "Backup" action_backup_one ;;
+      2) run_db_action "Backup all" run backups backup.sh ;;
       3) run_action "Backup list" run backups list-backups.sh ;;
-      4) require_db_action && run_action "Restore" action_restore || pause_continue ;;
+      4) run_db_action "Restore" action_restore ;;
       0) return 0 ;;
       *) ui_invalid; pause_continue ;;
     esac
