@@ -70,13 +70,19 @@ set_role_password() {
     -c "ALTER ROLE \"${role}\" WITH PASSWORD ${pw_lit};"
 }
 
-# Same TCP path remote apps use (published port + SCRAM).
+# Same TCP path remote apps use (SCRAM). Tries container IP first (no trust), then published port.
 verify_role_login() {
   local user="$1" pw="$2" db="$3"
-  local port="${4:-$(publish_host_port)}"
-  local attempt
+  local port ip attempt
 
-  for attempt in 1 2 3 4 5; do
+  port="$(publish_host_port)"
+  ip="$(docker compose exec -T postgres sh -c 'hostname -i 2>/dev/null | awk "{print \$1}"' 2>/dev/null | tr -d '\r\n')"
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ -n "$ip" ]]; then
+      docker compose exec -T -e PGPASSWORD="$pw" postgres \
+        psql -v ON_ERROR_STOP=1 -h "$ip" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1 && return 0
+    fi
     if command -v psql >/dev/null 2>&1; then
       PGPASSWORD="$pw" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1 && return 0
     else
@@ -86,6 +92,34 @@ verify_role_login() {
     sleep 1
   done
   return 1
+}
+
+# Login + search_path + schema app (full app readiness check).
+confirm_project_user() {
+  local user="$1" pw="$2" db="$3"
+  local port path
+
+  port="$(publish_host_port)"
+  verify_role_login "$user" "$pw" "$db" || return 1
+
+  if command -v psql >/dev/null 2>&1; then
+    path="$(PGPASSWORD="$pw" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SHOW search_path;")"
+  else
+    path="$(docker run --rm --network host -e PGPASSWORD="$pw" postgres:16-alpine \
+      psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U "$user" -d "$db" -tc "SHOW search_path;")"
+  fi
+  path="${path//$'\r'/}"
+  path="${path//$'\n'/}"
+  [[ "$path" == *app* ]] || {
+    echo "ERROR: search_path for '${user}' does not include schema 'app' (got: ${path})." >&2
+    return 1
+  }
+
+  schema_app_exists "$db" || {
+    echo "ERROR: schema 'app' missing in '${db}'." >&2
+    return 1
+  }
+  return 0
 }
 
 resolve_app_password() {
@@ -103,6 +137,9 @@ isolate_to_db() {
 REVOKE ALL ON DATABASE ${db} FROM PUBLIC;
 GRANT CONNECT, TEMPORARY ON DATABASE ${db} TO ${role};
 
+-- postgres DB still grants CONNECT via PUBLIC on many clusters; block app users.
+REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;
+
 DO \$\$
 DECLARE other_db text;
 BEGIN
@@ -113,6 +150,9 @@ BEGIN
     EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM %I', other_db, '${role}');
   END LOOP;
 END \$\$;
+
+REVOKE ALL ON DATABASE postgres FROM ${role};
+REVOKE CONNECT ON DATABASE postgres FROM ${role};
 SQL
 }
 
@@ -317,15 +357,14 @@ add_project_user() {
       ;;
   esac
 
-  if ! verify_role_login "$user" "$pw" "$db"; then
+  if ! confirm_project_user "$user" "$pw" "$db"; then
     echo "" >&2
-    echo "ERROR: user '${user}' was configured but password verification FAILED." >&2
-    echo "Remote apps (Django) will not connect. This is a pgstack bug if you saw OK before." >&2
-    echo "Fix with the EXACT password from your app .env:" >&2
+    echo "ERROR: user '${user}' was configured but verification FAILED." >&2
+    echo "Use the EXACT password from your app DATABASE_URL:" >&2
     echo "  PGSTACK_PASSWORD='...' ./scripts/users/set-password.sh ${user}" >&2
     return 1
   fi
-  echo "OK — login verified for '${user}' on '${db}' (remote-style SCRAM)"
+  echo "OK — '${user}' verified on '${db}' (login + schema app)"
 }
 
 print_connection_string() {
@@ -394,7 +433,9 @@ interactive_add_users() {
 
   echo ""
   echo "Users are optional. You choose access, username, and password for each."
-  echo "Apps need an owner/write user — use the same password as DATABASE_URL in your .env."
+  echo "Tip: set PGSTACK_PASSWORD to your DATABASE_URL password for exact match (no typos):"
+  echo "  PGSTACK_PASSWORD='...' ./scripts/databases/create-db.sh ${db}"
+  echo "Or use bootstrap: PGSTACK_PASSWORD='...' ./scripts/setup/bootstrap-app.sh ${db} USER"
   while true; do
     read -r -p "Add a user? (y/n): " answer
     [[ "$answer" =~ ^[yY] ]] || break
@@ -407,8 +448,8 @@ interactive_add_users() {
   if [[ "$added" -eq 0 ]]; then
     echo ""
     echo "WARNING: no users added — apps (Django, etc.) cannot connect yet."
-    echo "Add one now: ./scripts/users/add-user.sh ${db} owner YOUR_USER"
-    echo "Or set password from .env: PGSTACK_PASSWORD='...' ./scripts/users/set-password.sh YOUR_USER"
+    echo "Add one now:"
+    echo "  PGSTACK_PASSWORD='...' ./scripts/users/add-user.sh ${db} owner YOUR_USER"
   fi
 }
 
@@ -514,24 +555,118 @@ wipe_database_for_restore() {
     -c "DROP SCHEMA IF EXISTS app CASCADE;"
 }
 
-regrant_database_users_after_restore() {
-  local db="$1" db_owner="$2"
-  shift 2
-  local users=("$@") user grant_owner
+# Infer access level for a project user on a database.
+user_access_type() {
+  local db="$1" user="$2"
+  local owner is_admin has_insert
 
-  grant_owner="${db_owner:-$POSTGRES_USER}"
-  [[ -n "$grant_owner" ]] || grant_owner="$POSTGRES_USER"
+  owner="$(db_owner "$db")"
+  if [[ "$user" == "$owner" && "$owner" != "$POSTGRES_USER" ]]; then
+    echo owner
+    return 0
+  fi
+
+  is_admin="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -tAc \
+    "SELECT rolcreaterole::text FROM pg_roles WHERE rolname='${user}';" 2>/dev/null | tr -d '\r\n')"
+  if [[ "$is_admin" == "t" ]]; then
+    echo admin
+    return 0
+  fi
+
+  if ! schema_app_exists "$db"; then
+    echo write
+    return 0
+  fi
+
+  has_insert="$(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$db" -tAc \
+    "SELECT EXISTS(
+      SELECT 1 FROM pg_tables t
+      WHERE t.schemaname = 'app'
+        AND has_table_privilege('${user}', 'app.'||quote_ident(t.tablename), 'INSERT')
+    );" 2>/dev/null | tr -d '\r\n')"
+  if [[ "$has_insert" == "t" ]]; then
+    echo write
+  else
+    echo read
+  fi
+}
+
+# Lines: username:access (one per project user with CONNECT on db).
+snapshot_database_users() {
+  local db="$1" user access
+  while IFS= read -r user; do
+    [[ -z "$user" ]] && continue
+    access="$(user_access_type "$db" "$user")"
+    printf '%s:%s\n' "$user" "$access"
+  done < <(users_for_database "$db")
+}
+
+# Re-apply grants after restore (schema already exists). Does not create schema.
+ensure_app_user_after_restore() {
+  local db="$1" user="$2" access="$3" pw="$4"
+  local schema_owner
+
+  valid_access_type "$access" || access="write"
+  schema_owner="$(db_owner "$db")"
+  [[ -n "$schema_owner" ]] || { echo "ERROR: database '${db}' not found." >&2; return 1; }
+
+  case "$access" in
+    owner)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_owner_access "$db" "$user"
+      ;;
+    admin)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_db_admin "$db" "$user"
+      grant_write_access "$db" "$schema_owner" "$user"
+      ;;
+    read)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_read_access "$db" "$schema_owner" "$user"
+      ;;
+    write)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_write_access "$db" "$schema_owner" "$user"
+      ;;
+  esac
+}
+
+# users_spec: "user:access" entries (one per line or array elements).
+regrant_users_with_access() {
+  local db="$1" owner_pw="$2"
+  shift 2
+  local entries=("$@") entry user access
+
+  for entry in "${entries[@]}"; do
+    [[ -z "$entry" ]] && continue
+    user="${entry%%:*}"
+    access="${entry#*:}"
+    [[ "$user" == "$access" ]] && access="$(user_access_type "$db" "$user")"
+    echo "Re-applying ${access} access for '${user}'..."
+    ensure_app_user_after_restore "$db" "$user" "$access" "$owner_pw"
+  done
+}
+
+regrant_database_users_after_restore() {
+  local db="$1" db_owner_name="$2"
+  shift 2
+  local users=("$@") user access entries=()
 
   for user in "${users[@]}"; do
     [[ -z "$user" ]] && continue
-    if [[ "$user" == "$db_owner" && "$db_owner" != "$POSTGRES_USER" ]]; then
-      echo "Re-granting owner access to '${user}'..."
-      grant_owner_access "$db" "$user"
+    if [[ "$user" == "$db_owner_name" && "$db_owner_name" != "$POSTGRES_USER" ]]; then
+      access="owner"
     else
-      echo "Re-granting write access to '${user}'..."
-      grant_write_access "$db" "$grant_owner" "$user"
+      access="$(user_access_type "$db" "$user")"
     fi
+    entries+=("${user}:${access}")
   done
+
+  regrant_users_with_access "$db" "${PGSTACK_PASSWORD:-changeme}" "${entries[@]}"
 }
 
 revoke_app_grants() {

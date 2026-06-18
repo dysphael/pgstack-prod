@@ -8,6 +8,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/lib/common.sh"
 source "${ROOT}/lib/backups.sh"
+source "${ROOT}/lib/db-users.sh"
+source "${ROOT}/lib/app-lifecycle.sh"
 source "${ROOT}/lib/ui.sh"
 
 SCRIPTS="${ROOT}/scripts"
@@ -161,7 +163,8 @@ draw_main_screen() {
   ui_menu_item "2" "Databases" "create, list, drop"
   ui_menu_item "3" "Users" "roles, passwords"
   ui_menu_item "4" "Backups" "backup, restore"
-  ui_menu_item "5" "Tools" "psql shell"
+  ui_menu_item "5" "Apps" "setup, backup, restore"
+  ui_menu_item "6" "Tools" "psql shell"
   ui_menu_item "0" "Exit"
   ui_box_close
   ui_footer_hints
@@ -307,6 +310,165 @@ submenu_backups() {
   done
 }
 
+manager_prompt_password() {
+  local prompt="${1:-App password (from DATABASE_URL): }"
+  read -r -s -p "$prompt" PGSTACK_PASSWORD
+  echo
+  export PGSTACK_PASSWORD
+  [[ -n "$PGSTACK_PASSWORD" ]] || { ui_err "Password required."; return 1; }
+}
+
+ui_pick_registered_app() {
+  local prompt="${1:-Select app:}"
+  local -a APPS=()
+  read_array APPS app_registry_list_dbs
+  [[ ${#APPS[@]} -gt 0 ]] || { ui_err "No apps registered. Use Apps → Setup app."; return 1; }
+  ui_pick_list "$prompt" "${APPS[@]}"
+}
+
+submenu_apps() {
+  local c
+  while true; do
+    GO_HOME=0
+    draw_submenu "Apps" \
+      "1" "List apps" "registry + status" \
+      "2" "Setup app" "DB + owner + verify" \
+      "3" "Backup app" "sql.gz + manifest" \
+      "4" "Restore app" "backup → app online" \
+      "5" "Drop app" "optional backup first" \
+      "6" "Verify app" "login + schema check"
+    ui_read_choice
+    c="${UI_CHOICE:-}"
+    handle_nav_input "$c" 0 && { [[ $GO_HOME -eq 1 ]] && return 0; continue; }
+
+    case "$c" in
+      1) run_db_action "Apps" action_app_list ;;
+      2) run_db_action "Setup app" action_app_setup ;;
+      3) run_db_action "Backup app" action_app_backup ;;
+      4) run_db_action "Restore app" action_app_restore ;;
+      5) run_db_action "Drop app" action_app_drop ;;
+      6) run_db_action "Verify app" action_app_verify ;;
+      0) return 0 ;;
+      *) ui_invalid; pause_continue ;;
+    esac
+    [[ $GO_HOME -eq 1 ]] && return 0
+  done
+}
+
+action_app_list() {
+  app_registry_print_table
+}
+
+action_app_setup() {
+  ui_read_choice "Database name (e.g. hyperfx)"
+  local db="${UI_CHOICE:-}"
+  [[ -n "$db" ]] || { ui_cancelled; return 0; }
+  valid_db_name "$db" || { ui_err "Invalid database name."; return 0; }
+
+  ui_read_choice "App user (e.g. hyperfx_django)"
+  local user="${UI_CHOICE:-}"
+  [[ -n "$user" ]] || { ui_cancelled; return 0; }
+  valid_db_name "$user" || { ui_err "Invalid username."; return 0; }
+
+  ui_read_choice "Label (optional, e.g. HyperFX Stake)"
+  local label="${UI_CHOICE:-}"
+
+  manager_prompt_password || return 0
+  app_setup "$db" "$user" "$PGSTACK_PASSWORD" "$label" || true
+}
+
+action_app_backup() {
+  if ui_pick_registered_app "Select app to backup:"; then
+    app_backup "$UI_PICK_RESULT" >/dev/null || true
+  else
+    ui_pick_project_db "Or select database:" || { ui_cancelled; return 0; }
+    app_backup "$UI_PICK_RESULT" >/dev/null || true
+  fi
+}
+
+action_app_restore() {
+  local db file choice i
+
+  if ui_pick_registered_app "Select app to restore:"; then
+    db="$UI_PICK_RESULT"
+  else
+    ui_pick_project_db "Select target database:" || { ui_cancelled; return 0; }
+    db="$UI_PICK_RESULT"
+  fi
+
+  collect_backups_for_db "$db"
+  if [[ ${#BACKUP_FILES[@]} -eq 0 ]]; then
+    ui_err "No backups found for '${db}'."
+    ui_dim "Run Apps → Backup app first."
+    return 0
+  fi
+
+  echo ""
+  printf '%-3s %-20s %-6s %s\n' "#" "Date" "Size" "File"
+  for i in "${!BACKUP_FILES[@]}"; do
+    file="${BACKUP_FILES[$i]}"
+    printf '%-3s %-20s %-6s %s\n' "$((i + 1))" "$(backup_mtime "$file")" "$(du -h "$file" | cut -f1)" "${file##*/}"
+  done
+  echo ""
+  ui_read_choice "Backup number (0 = cancel)"
+  choice="${UI_CHOICE:-}"
+  [[ "$choice" == "0" || -z "$choice" ]] && { ui_cancelled; return 0; }
+  [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#BACKUP_FILES[@]} )) || { ui_err "Invalid choice."; return 0; }
+  file="${BACKUP_FILES[$((choice - 1))]}"
+
+  manager_prompt_password || return 0
+  echo ""
+  ui_warn "This replaces all data in '${db}'."
+  read -r -p "Type YES to continue: " OK
+  [[ "$OK" == "YES" ]] || { ui_cancelled; return 0; }
+
+  local user
+  user="$(app_registry_get "$db" user)"
+  app_restore "$file" "$db" "$user" "$PGSTACK_PASSWORD" || true
+}
+
+action_app_drop() {
+  local db backup_first=1 answer
+
+  if ui_pick_registered_app "Select app to drop:"; then
+    db="$UI_PICK_RESULT"
+  else
+    ui_pick_project_db "Select database:" || { ui_cancelled; return 0; }
+    db="$UI_PICK_RESULT"
+  fi
+
+  ui_read_choice "Backup before drop? (Y/n)"
+  answer="${UI_CHOICE:-Y}"
+  [[ "$answer" =~ ^[nN] ]] && backup_first=0
+
+  ui_warn "Drop '${db}' — all data will be deleted."
+  read -r -p "Type YES to continue: " OK
+  [[ "$OK" == "YES" ]] || { ui_cancelled; return 0; }
+
+  app_drop "$db" "$backup_first" || true
+}
+
+action_app_verify() {
+  local db user
+
+  if ui_pick_registered_app "Select app to verify:"; then
+    db="$UI_PICK_RESULT"
+  else
+    ui_pick_project_db "Select database:" || { ui_cancelled; return 0; }
+    db="$UI_PICK_RESULT"
+  fi
+
+  user="$(app_registry_get "$db" user)"
+  if [[ -z "$user" ]]; then
+    ui_read_choice "App user"
+    user="${UI_CHOICE:-}"
+    [[ -n "$user" ]] || { ui_cancelled; return 0; }
+  fi
+
+  manager_prompt_password || return 0
+  app_verify "$db" "$user" "$PGSTACK_PASSWORD" || true
+}
+
 submenu_tools() {
   local c
   while true; do
@@ -371,6 +533,8 @@ action_list_access() {
 
 action_create_db() {
   require_db_action || return 0
+  ui_info "Tip: for apps (Django, etc.) use Apps → Setup app instead."
+  echo ""
   ui_read_choice "Database name (e.g. myapp)"
   local DB="${UI_CHOICE:-}"
   [[ -n "$DB" ]] || { ui_cancelled; return 0; }
@@ -404,7 +568,13 @@ action_reset_password() {
   local user="${UI_CHOICE:-}"
   [[ -n "$user" ]] || { ui_cancelled; return 0; }
   valid_db_name "$user" || { ui_err "Invalid username."; return 0; }
-  run users reset-password.sh "$user" || true
+  ui_pick_list "Method:" "From DATABASE_URL (exact)" "Interactive prompt"
+  if [[ "$UI_PICK_RESULT" == "From DATABASE_URL (exact)" ]]; then
+    manager_prompt_password "DATABASE_URL password: " || return 0
+    PGSTACK_PASSWORD="$PGSTACK_PASSWORD" run users set-password.sh "$user" || true
+  else
+    run users reset-password.sh "$user" || true
+  fi
 }
 
 action_drop_user() {
@@ -431,17 +601,24 @@ action_restore() {
   [[ "$choice" == "0" || -z "$choice" ]] && { ui_cancelled; return 0; }
 
   local file
-  file="$(run backups list-backups.sh --path "$choice" 2>/dev/null)" || { ui_err "Invalid choice."; return 0; }
+  file="$(backup_path_at "$choice" 2>/dev/null)" || { ui_err "Invalid choice."; return 0; }
 
-  local suggested
+  local suggested db user
   suggested="$(backup_db_from_filename "$file")"
 
   ui_read_choice "Target database [${suggested}]"
-  local DB="${UI_CHOICE:-$suggested}"
+  DB="${UI_CHOICE:-$suggested}"
   [[ -n "$DB" && "$DB" != "?" ]] || { ui_err "Invalid database name."; return 0; }
   valid_db_name "$DB" || { ui_err "Invalid database name."; return 0; }
 
-  run backups restore.sh "$file" "$DB" || true
+  user="$(app_registry_get "$DB" user)"
+  manager_prompt_password || return 0
+  echo ""
+  ui_warn "Restore replaces data in '${DB}'."
+  read -r -p "Type YES to continue: " OK
+  [[ "$OK" == "YES" ]] || { ui_cancelled; return 0; }
+
+  app_restore "$file" "$DB" "$user" "$PGSTACK_PASSWORD" || true
 }
 
 action_psql() {
@@ -473,7 +650,8 @@ main() {
       2) submenu_databases ;;
       3) submenu_users ;;
       4) submenu_backups ;;
-      5) submenu_tools ;;
+      5) submenu_apps ;;
+      6) submenu_tools ;;
       0) ui_ok "Bye."; exit 0 ;;
       *) ui_invalid; pause_continue ;;
     esac

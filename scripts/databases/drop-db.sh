@@ -38,8 +38,10 @@ fi
 echo ""
 echo "Drop database: ${DB}"
 echo "WARNING: all data will be permanently deleted."
-read -r -p "Type YES to continue: " OK
-[[ "$OK" == "YES" ]] || { echo "Cancelled."; exit 0; }
+if [[ "${PGSTACK_YES:-}" != "1" ]]; then
+  read -r -p "Type YES to continue: " OK
+  [[ "$OK" == "YES" ]] || { echo "Cancelled."; exit 0; }
+fi
 
 prepare_database_drop "$DB"
 
@@ -57,9 +59,7 @@ if [[ ${#EXCLUSIVE_USERS[@]} -gt 0 ]]; then
   echo "=== IMPORTANT — app users were removed ==="
   printf '  %s\n' "${EXCLUSIVE_USERS[@]}"
   echo ""
-  echo "Your app (.env DATABASE_URL) will FAIL until you:"
-  echo "  1) ./scripts/databases/create-db.sh ${DB}   (or create-db + add-user)"
-  echo "  2) ./scripts/users/add-user.sh ${DB} owner USER"
-  echo "  3) PGSTACK_PASSWORD='exact-.env-password' ./scripts/users/set-password.sh USER"
-  echo "  4) ./scripts/tools/diagnose-user.sh USER ${DB}"
+  echo "Your app (.env DATABASE_URL) will FAIL until you restore or setup:"
+  echo "  ./scripts/app.sh restore <backup.sql.gz> ${DB}"
+  echo "  or: PGSTACK_PASSWORD='...' ./scripts/app.sh setup ${DB} USER"
 fi

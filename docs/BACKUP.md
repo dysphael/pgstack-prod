@@ -1,5 +1,7 @@
 # Backup & Restore Guide
 
+> **Plug-and-play (recomendado):** use o [RUNBOOK.md](RUNBOOK.md) — menu **Apps** no Manager ou `./scripts/app.sh`.
+
 A step-by-step guide for beginners. No prior database experience required.
 
 ---
@@ -76,6 +78,19 @@ data/backups/backup_myapp_20260115_030000.sql.gz   2.4M
 
 **Warning:** restoring **replaces** the current data in that database. Always make a fresh backup before restoring if you are unsure.
 
+Each backup now includes a **manifest** (`.manifest.json`) with database owner and user access levels. Restore recreates users, syncs password, and verifies app login.
+
+### Recommended — Apps menu or app.sh
+
+```bash
+export PGSTACK_PASSWORD='exact-password-from-DATABASE_URL'
+./scripts/app.sh restore data/backups/backup_myapp_20260115_030000.sql.gz myapp
+```
+
+Or: **Manager → Apps → Restore app** (guided wizard).
+
+### Manual — restore.sh
+
 ### Step 1 — find your backup file
 
 ```bash
@@ -91,12 +106,16 @@ data/backups/backup_myapp_20260115_030000.sql.gz
 ### Step 2 — run the restore
 
 ```bash
-./scripts/backups/restore.sh data/backups/backup_myapp_20260115_030000.sql.gz myapp
+PGSTACK_PASSWORD='your-app-password' ./scripts/backups/restore.sh data/backups/backup_myapp_20260115_030000.sql.gz myapp
 ```
+
+`PGSTACK_PASSWORD` must match your app `DATABASE_URL` password. Without it, restore will fail.
 
 Replace:
 - the filename with your real backup file
 - `myapp` with your real database name
+
+Optional third argument: owner username if not in registry/manifest.
 
 ### Step 3 — confirm
 
@@ -111,10 +130,12 @@ Type exactly `YES` and press Enter.
 ### Step 4 — verify
 
 ```bash
-docker compose exec postgres psql -U appuser -d myapp -c "\dt"
+PGSTACK_PASSWORD='your-app-password' ./scripts/app.sh verify myapp
 ```
 
-This lists tables in the database. If you see your tables, the restore worked.
+Or **Manager → Apps → Verify app**.
+
+This checks SCRAM login and `search_path=app` — not just admin access.
 
 ---
 
@@ -244,9 +265,9 @@ docker compose logs postgres
 | Backup one DB | `./scripts/backups/backup.sh myapp` |
 | Backup all DBs | `./scripts/backups/backup.sh` |
 | List backups | `./scripts/backups/list-backups.sh` |
-| Restore | `./scripts/backups/restore.sh data/backups/FILE.sql.gz myapp` |
-| View log files | `tail -f data/logs/postgres/postgresql-$(date +%Y-%m-%d).log` |
-| List tables | `docker compose exec postgres psql -U appuser -d myapp -c "\dt"` |
+| Restore (app-ready) | `PGSTACK_PASSWORD='...' ./scripts/app.sh restore data/backups/FILE.sql.gz myapp` |
+| Restore (script) | `PGSTACK_PASSWORD='...' ./scripts/backups/restore.sh data/backups/FILE.sql.gz myapp` |
+| Verify app | `PGSTACK_PASSWORD='...' ./scripts/app.sh verify myapp` |
 
 ---
 
