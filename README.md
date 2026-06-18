@@ -40,52 +40,37 @@ postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
 
 ## Create a project database
 
-Each project gets **one database** and **three users**:
-
-| User | Access | Use in apps? |
-|------|--------|--------------|
-| `appuser` (`.env`) | Server admin — backups, scripts | **No** |
-| `myapp_owner` | Read, write, delete, create tables | **Yes** (main app) |
-| `myapp_read` | Read only — all tables in `app` | **Yes** (reports, BI) |
-| `myapp_admin` | Create read/write users for `myapp` only | **No** (management) |
+Creates **only the database** (schema `app`). Users are **optional** — you choose if, when, and which to create.
 
 ```bash
 ./scripts/databases/create-db.sh myapp
 ```
 
-Creates `myapp` plus `myapp_owner`, `myapp_read`, and `myapp_admin` (you set each password).
+Flow:
+1. Creates database `myapp`
+2. Asks: **Add a user? (y/n)** — repeat as needed
+3. For each user: choose access → username → password
 
-**Main app connection:**
+| Access | What it can do |
+|--------|----------------|
+| `owner` | Read, write, delete, create tables (main app) |
+| `read` | Read only |
+| `write` | Read + write on tables |
+| `admin` | Create read/write users for this DB |
 
-```text
-postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
-```
-
-**Read-only connection:**
-
-```text
-postgresql://myapp_read:PASSWORD@db.yourdomain.com:5432/myapp
-```
-
-**Add more users later:**
+**Add users later:**
 
 ```bash
+./scripts/users/add-user.sh myapp owner myapp_app
 ./scripts/users/add-user.sh myapp read analytics
 ./scripts/users/add-user.sh myapp write worker
+./scripts/users/add-user.sh myapp admin myapp_admin
 ```
 
-**Or let the DB admin create users** (logged in as `myapp_admin`):
+**App connection (example):**
 
-```sql
-SELECT app.provision_user('analytics', 'read',  'password');
-SELECT app.provision_user('worker',    'write', 'password');
-```
-
-Verify isolation:
-
-```bash
-./scripts/users/list-access.sh
-./scripts/users/list-access.sh myapp
+```text
+postgresql://myapp_app:PASSWORD@db.yourdomain.com:5432/myapp
 ```
 
 ## Logs (persistent files)
@@ -128,7 +113,7 @@ See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough
 |----------|---------|
 | Firewall | `sudo ufw allow from APP_SERVER_IP to any port 5432 proto tcp` |
 | Strong password | 32+ random characters in `.env` |
-| Per-project users | `./scripts/databases/create-db.sh myapp` — owner + read + admin per DB |
+| Per-project users | `./scripts/databases/create-db.sh` + `./scripts/users/add-user.sh` |
 | Localhost only | `POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432` if apps run on the same VPS |
 | Copy backups off-server | `scp` or cloud sync — see [docs/BACKUP.md](docs/BACKUP.md) |
 

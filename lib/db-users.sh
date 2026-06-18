@@ -188,26 +188,134 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db}')\gexec
 SQL
 }
 
-print_user_summary() {
-  local db="$1" owner="$2" read_user="$3" admin_user="$4"
+grant_owner_access() {
+  local db="$1" user="$2"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
+GRANT ALL ON SCHEMA app TO ${user};
+ALTER DEFAULT PRIVILEGES FOR ROLE ${user} IN SCHEMA app
+  GRANT ALL ON TABLES TO ${user};
+ALTER DEFAULT PRIVILEGES FOR ROLE ${user} IN SCHEMA app
+  GRANT ALL ON SEQUENCES TO ${user};
+ALTER ROLE ${user} SET search_path = app;
+ALTER SCHEMA app OWNER TO ${user};
+SQL
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
+    -c "ALTER DATABASE ${db} OWNER TO ${user};"
+}
+
+valid_access_type() {
+  [[ "${1:-}" =~ ^(owner|read|write|admin)$ ]]
+}
+
+add_project_user() {
+  local db="$1" access="$2" user="$3" pw="$4"
+  local schema_owner
+
+  valid_db_name "$user" || { echo "ERROR: invalid username." >&2; return 1; }
+  valid_access_type "$access" || { echo "ERROR: invalid access type." >&2; return 1; }
+
+  schema_owner="$(db_owner "$db")"
+  [[ -n "$schema_owner" ]] || { echo "ERROR: database '${db}' not found." >&2; return 1; }
+
+  case "$access" in
+    owner)
+      if [[ "$schema_owner" != "$POSTGRES_USER" && "$schema_owner" != "$user" ]]; then
+        echo "ERROR: database already has owner '${schema_owner}'." >&2
+        return 1
+      fi
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_owner_access "$db" "$user"
+      ;;
+    read)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_read_access "$db" "$schema_owner" "$user"
+      ;;
+    write)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_write_access "$db" "$schema_owner" "$user"
+      ;;
+    admin)
+      ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT"
+      isolate_to_db "$db" "$user"
+      grant_db_admin "$db" "$user"
+      ;;
+  esac
+}
+
+print_connection_string() {
+  local user="$1" db="$2"
   local host="${POSTGRES_HOST:-localhost}"
+  echo "postgresql://${user}:PASSWORD@${host}:5432/${db}"
+}
+
+print_db_summary() {
+  local db="$1"
   echo ""
-  echo "OK — database '${db}' ready"
+  echo "OK — database '${db}' ready (schema: app)"
   echo ""
-  echo "  Roles:"
-  echo "    ${owner}       read + write + delete (app)"
-  echo "    ${read_user}   read only (reports, BI)"
-  echo "    ${admin_user}  create read/write users for this DB only"
+  echo "Add users anytime:"
+  echo "  ./scripts/users/add-user.sh ${db} <owner|read|write|admin> USERNAME"
   echo ""
-  echo "  Connection strings:"
-  echo "    postgresql://${owner}:PASSWORD@${host}:5432/${db}"
-  echo "    postgresql://${read_user}:PASSWORD@${host}:5432/${db}"
+  echo "Users with access:"
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc "
+    SELECT r.rolname
+    FROM pg_roles r
+    WHERE r.rolcanlogin AND NOT r.rolsuper
+      AND r.rolname <> '${POSTGRES_USER}'
+      AND has_database_privilege(r.rolname, '${db}', 'CONNECT')
+    ORDER BY r.rolname;
+  " | while read -r u; do
+    [[ -n "$u" ]] && echo "  $(print_connection_string "$u" "$db")"
+  done
   echo ""
-  echo "  DB admin creates users:"
-  echo "    SELECT app.provision_user('new_user', 'read',  'password');"
-  echo "    SELECT app.provision_user('new_user', 'write', 'password');"
+  echo "Server admin ${POSTGRES_USER} is for management only — not for apps."
+}
+
+prompt_add_user_interactive() {
+  local db="$1"
+  local access user pw pw_esc choice
+
   echo ""
-  echo "  Or from server: ./scripts/users/add-user.sh ${db} read|write USERNAME"
-  echo "  Tables use schema: app"
-  echo "  Server admin ${POSTGRES_USER} is for backups only — not for apps."
+  echo "Access types:"
+  echo "  1) owner — read, write, delete, create tables"
+  echo "  2) read   — read only"
+  echo "  3) write  — read + write on tables"
+  echo "  4) admin  — create read/write users for this DB"
+  echo "  0) cancel"
+  read -r -p "Access: " choice
+
+  case "$choice" in
+    1) access="owner" ;;
+    2) access="read" ;;
+    3) access="write" ;;
+    4) access="admin" ;;
+    0|"") return 1 ;;
+    *) echo "Invalid choice." >&2; return 1 ;;
+  esac
+
+  read -r -p "Username: " user
+  [[ -n "$user" ]] || return 1
+
+  pw="$(prompt_password "$user")"
+  pw_esc="$(sql_escape "$pw")"
+  add_project_user "$db" "$access" "$user" "$pw_esc"
+  echo ""
+  echo "OK — ${access} user '${user}' added"
+  print_connection_string "$user" "$db"
+}
+
+interactive_add_users() {
+  local db="$1" answer
+
+  echo ""
+  echo "Users are optional. You choose access, username, and password for each."
+  while true; do
+    read -r -p "Add a user? (y/n): " answer
+    [[ "$answer" =~ ^[yY] ]] || break
+    prompt_add_user_interactive "$db" || true
+    echo ""
+  done
 }

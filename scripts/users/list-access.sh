@@ -26,9 +26,8 @@ SELECT
   r.rolname AS user,
   CASE
     WHEN r.rolname = pg_catalog.pg_get_userbyid(d.datdba) THEN 'owner'
-    WHEN r.rolname LIKE d.datname || '_read' THEN 'read'
-    WHEN r.rolname LIKE d.datname || '_admin' THEN 'admin'
-    ELSE 'extra'
+    WHEN r.rolcreaterole THEN 'admin'
+    ELSE 'user'
   END AS role_type,
   has_database_privilege(r.rolname, d.datname, 'CONNECT') AS can_connect
 FROM pg_database d

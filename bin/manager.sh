@@ -209,7 +209,7 @@ action_add_user() {
   pick_project_db "Select database:" || { echo "Cancelled."; return 0; }
   local db="$PICK_RESULT"
 
-  pick_from_list "Select access level:" "read" "write" || { echo "Cancelled."; return 0; }
+  pick_from_list "Select access level:" "owner" "read" "write" "admin" || { echo "Cancelled."; return 0; }
   local access="$PICK_RESULT"
 
   read -r -p "Username: " user

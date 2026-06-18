@@ -50,7 +50,7 @@ Interactive menu with 5 sections. Every option calls a CLI script below.
 | `scripts/databases/conn-info.sh` | `./scripts/databases/conn-info.sh <db>` |
 | **Users** | |
 | `scripts/users/list-access.sh` | `./scripts/users/list-access.sh [db]` |
-| `scripts/users/add-user.sh` | `./scripts/users/add-user.sh <db> <read\|write> <user>` |
+| `scripts/users/add-user.sh` | `./scripts/users/add-user.sh <db> <owner\|read\|write\|admin> <user>` |
 | `scripts/users/reset-password.sh` | `./scripts/users/reset-password.sh <user>` |
 | `scripts/users/drop-user.sh` | `./scripts/users/drop-user.sh <user>` |
 | **Backups** | |
@@ -97,23 +97,23 @@ Or run scripts directly:
 
 ## `create-db.sh`
 
-Creates database `myapp` with 3 users:
-
-| User | Role |
-|------|------|
-| `myapp_owner` | Read, write, delete, create tables |
-| `myapp_read` | Read only |
-| `myapp_admin` | Create read/write users for this DB |
+Creates database + schema `app`. **Users are optional** — you choose each one interactively.
 
 ```bash
 ./scripts/databases/create-db.sh myapp
 ```
 
-App connection:
+1. Creates `myapp`
+2. **Add a user? (y/n)** — for each user: access → username → password
 
-```text
-postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
-```
+| Access | Role |
+|--------|------|
+| `owner` | Read, write, delete, create tables |
+| `read` | Read only |
+| `write` | Read + write on tables |
+| `admin` | Create read/write users for this DB |
+
+Add users later with `add-user.sh`.
 
 ---
 
@@ -145,7 +145,7 @@ postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
 | Create project DB | `./scripts/databases/create-db.sh myapp` |
 | Connection strings | `./scripts/databases/conn-info.sh myapp` |
 | List users | `./scripts/users/list-access.sh` |
-| Add user | `./scripts/users/add-user.sh myapp read USER` |
+| Add user | `./scripts/users/add-user.sh myapp owner USER` |
 | Reset password | `./scripts/users/reset-password.sh USER` |
 | Backup | `./scripts/backups/backup.sh myapp` |
 | List backups | `./scripts/backups/list-backups.sh` |
