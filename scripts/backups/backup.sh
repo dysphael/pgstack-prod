@@ -12,7 +12,8 @@ TARGET="${1:-}"
 TS="$(date +%Y%m%d_%H%M%S)"
 
 backup_db() {
-  local db="$1" file="${BACKUP_DIR}/backup_${db}_${TS}.sql.gz"
+  local db="$1"
+  local file="${BACKUP_DIR}/backup_${db}_${TS}.sql.gz"
   echo "Backing up ${db}..."
   docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" --no-owner --no-acl -d "$db" | gzip > "$file"
   [[ -s "$file" ]] || { rm -f "$file"; echo "ERROR: backup failed." >&2; exit 1; }
