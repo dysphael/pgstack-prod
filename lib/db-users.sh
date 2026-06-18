@@ -65,6 +65,21 @@ END \$\$;
 SQL
 }
 
+schema_app_exists() {
+  local db="$1"
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" -tAc \
+    "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'app'" | grep -q 1
+}
+
+ensure_project_schema_if_missing() {
+  local db="$1" owner="$2"
+  if schema_app_exists "$db"; then
+    return 0
+  fi
+  echo "Schema 'app' not found in '${db}' — creating project schema..."
+  setup_project_schema "$db" "$owner"
+}
+
 setup_project_schema() {
   local db="$1" owner="$2"
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$db" <<SQL
@@ -225,21 +240,25 @@ add_project_user() {
       fi
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
+      ensure_project_schema_if_missing "$db" "$user"
       grant_owner_access "$db" "$user"
       ;;
     read)
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
+      ensure_project_schema_if_missing "$db" "$schema_owner"
       grant_read_access "$db" "$schema_owner" "$user"
       ;;
     write)
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
+      ensure_project_schema_if_missing "$db" "$schema_owner"
       grant_write_access "$db" "$schema_owner" "$user"
       ;;
     admin)
       ensure_role_login "$user" "$pw" "NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT"
       isolate_to_db "$db" "$user"
+      ensure_project_schema_if_missing "$db" "$schema_owner"
       grant_db_admin "$db" "$user"
       ;;
   esac
