@@ -1,194 +1,132 @@
 # Scripts Guide
 
-Quick reference for every script in `scripts/`.
+Quick reference for `bin/`, `lib/`, and `scripts/`.
 
 Run all commands from the project root (`~/pgstack-prod`).
 
-No separate setup step is required — `docker compose up -d` creates folders and fixes permissions automatically.
+## Project layout
+
+```text
+pgstack-prod/
+├── manager.sh              # shortcut → bin/manager.sh
+├── bin/
+│   └── manager.sh          # interactive menu
+├── lib/                    # internal helpers (do not run directly)
+│   ├── init.sh
+│   ├── common.sh
+│   ├── db-users.sh
+│   └── backups.sh
+└── scripts/
+    ├── overview/           # monitoring & logs
+    ├── databases/          # create, list, drop
+    ├── users/              # roles & access
+    ├── backups/            # backup & restore
+    └── tools/              # psql shell
+```
+
+## Entry point
+
+```bash
+./bin/manager.sh    # or ./manager.sh
+```
+
+Interactive menu with 5 sections. Every option calls a CLI script below.
+
+## CLI scripts
+
+| Script | Usage |
+|--------|-------|
+| **Overview** | |
+| `scripts/overview/status.sh` | `./scripts/overview/status.sh` |
+| `scripts/overview/db-stats.sh` | `./scripts/overview/db-stats.sh [db]` |
+| `scripts/overview/connections.sh` | `./scripts/overview/connections.sh [db]` |
+| `scripts/overview/db-tables.sh` | `./scripts/overview/db-tables.sh <db>` |
+| `scripts/overview/slow-queries.sh` | `./scripts/overview/slow-queries.sh [limit]` |
+| `scripts/overview/logs.sh` | `./scripts/overview/logs.sh [--tail N\|--list]` |
+| **Databases** | |
+| `scripts/databases/list-dbs.sh` | `./scripts/databases/list-dbs.sh` |
+| `scripts/databases/create-db.sh` | `./scripts/databases/create-db.sh <db>` |
+| `scripts/databases/drop-db.sh` | `./scripts/databases/drop-db.sh <db>` |
+| `scripts/databases/conn-info.sh` | `./scripts/databases/conn-info.sh <db>` |
+| **Users** | |
+| `scripts/users/list-access.sh` | `./scripts/users/list-access.sh [db]` |
+| `scripts/users/add-user.sh` | `./scripts/users/add-user.sh <db> <read\|write> <user>` |
+| `scripts/users/reset-password.sh` | `./scripts/users/reset-password.sh <user>` |
+| `scripts/users/drop-user.sh` | `./scripts/users/drop-user.sh <user>` |
+| **Backups** | |
+| `scripts/backups/backup.sh` | `./scripts/backups/backup.sh [db]` |
+| `scripts/backups/list-backups.sh` | `./scripts/backups/list-backups.sh [--path N]` |
+| `scripts/backups/restore.sh` | `./scripts/backups/restore.sh <file> <db>` |
+| **Tools** | |
+| `scripts/tools/psql.sh` | `./scripts/tools/psql.sh [db]` |
+
+`backup.sh --list` delegates to `list-backups.sh`.
 
 ---
 
-## Order of use (first deploy)
+## First deploy
 
 ```bash
 cp .env.example .env
 nano .env
 docker compose up -d
-./scripts/manager.sh             # interactive manager (recommended)
+./bin/manager.sh
 ```
 
 Or run scripts directly:
 
 ```bash
-./scripts/status.sh              # confirm it is healthy
-./scripts/create-db.sh myapp     # create your first project database (optional)
-./scripts/backup.sh myapp        # first backup (recommended)
+./scripts/overview/status.sh
+./scripts/databases/create-db.sh myapp
+./scripts/backups/backup.sh myapp
 ```
 
 ---
 
-## `manager.sh`
+## Manager sections
 
-**What it does:** Interactive menu to manage the whole stack while PostgreSQL is running.
-
-| Option | Action |
-|--------|--------|
-| 1 | Status / health |
-| 2 | List project databases |
-| 3 | List users and access |
-| 4 | Create project database (owner + read + admin) |
-| 5 | Add read/write user |
-| 6 | Backup one database |
-| 7 | Backup all databases |
-| 8 | List backups (full path, size, date) |
-| 9 | Restore backup (guided) |
-| 10 | Open psql shell |
-| 0 | Exit |
-
-**When to use:** Day-to-day operations on the server — preferred entry point.
-
-```bash
-./scripts/manager.sh
-```
-
-Shows host, admin user, backup folder, and log folder in the header.
-
----
-
-## `status.sh`
-
-**What it does:** Quick health check.
-
-- Shows if the container is running
-- Checks if PostgreSQL accepts connections
-- Lists databases
-- Shows log and backup folder paths
-
-**When to use:** After deploy, after restart, or when something feels wrong.
-
-```bash
-./scripts/status.sh
-```
+| Section | Actions |
+|---------|---------|
+| Overview | Status, stats, connections, table sizes, slow queries, logs |
+| Databases | List, create, drop, connection strings |
+| Users | List access, add, reset password, drop |
+| Backups | Backup one/all, list, restore |
+| Tools | psql shell |
 
 ---
 
 ## `create-db.sh`
 
-**What it does:** Creates an isolated project database with **3 users**:
+Creates database `myapp` with 3 users:
 
 | User | Role |
 |------|------|
-| `myapp_owner` | Read, write, delete, create tables (main app) |
-| `myapp_read` | Read only — all data in schema `app` |
-| `myapp_admin` | Create read/write users for `myapp` only |
-
-Each user can connect **only** to `myapp`.
+| `myapp_owner` | Read, write, delete, create tables |
+| `myapp_read` | Read only |
+| `myapp_admin` | Create read/write users for this DB |
 
 ```bash
-./scripts/create-db.sh myapp
+./scripts/databases/create-db.sh myapp
 ```
 
-**App connection (owner):**
+App connection:
 
 ```text
 postgresql://myapp_owner:PASSWORD@db.yourdomain.com:5432/myapp
 ```
 
-**Read-only connection:**
-
-```text
-postgresql://myapp_read:PASSWORD@db.yourdomain.com:5432/myapp
-```
-
 ---
 
-## `add-user.sh`
-
-**What it does:** Adds a read-only or read-write user to an existing project.
+## Backups
 
 ```bash
-./scripts/add-user.sh myapp read analytics
-./scripts/add-user.sh myapp write worker
+./scripts/backups/backup.sh myapp
+./scripts/backups/backup.sh
+./scripts/backups/list-backups.sh
+./scripts/backups/restore.sh backups/backup_myapp_DATE.sql.gz myapp
 ```
 
-**DB admin** (`myapp_admin`) can also create users via SQL:
-
-```sql
-SELECT app.provision_user('analytics', 'read',  'password');
-SELECT app.provision_user('worker',    'write', 'password');
-```
-
----
-
-## `list-access.sh`
-
-**What it does:** Shows users per database and detects cross-database access.
-
-```bash
-./scripts/list-access.sh
-./scripts/list-access.sh myapp
-```
-
-Each project user should connect to **one database only**.
-
----
-
-## `backup.sh`
-
-**What it does:** Saves a compressed copy of your database (`.sql.gz`).
-
-| Command | Result |
-|---------|--------|
-| `./scripts/backup.sh` | Backs up all project databases |
-| `./scripts/backup.sh myapp` | Backs up only `myapp` |
-| `./scripts/backup.sh --list` | Lists existing backup files |
-
-**When to use:** Before updates, daily (cron), or before any risky change.
-
-```bash
-./scripts/backup.sh myapp
-./scripts/backup.sh --list
-```
-
-Files are saved in `backups/`:
-
-```text
-backups/backup_myapp_20260115_030000.sql.gz
-```
-
-> Full beginner guide: [BACKUP.md](BACKUP.md)
-
----
-
-## `restore.sh`
-
-**What it does:** Loads a backup file back into a database.
-
-**Warning:** Replaces existing data in the target database.
-
-```bash
-./scripts/restore.sh backups/backup_myapp_20260115_030000.sql.gz myapp
-```
-
-Steps:
-1. Shows the file and target database
-2. Asks you to type `YES` to confirm
-3. Creates the database if it does not exist
-4. Restores the data
-
-**When to use:** Disaster recovery, or copying data to a fresh database.
-
----
-
-## `_common.sh`
-
-**What it does:** Internal helper used by the other scripts.
-
-You do **not** run this directly. It handles:
-
-- Loading `.env`
-- Checking if PostgreSQL is running
-- Validating database names
+> Full guide: [BACKUP.md](BACKUP.md)
 
 ---
 
@@ -196,17 +134,23 @@ You do **not** run this directly. It handles:
 
 | I want to… | Command |
 |------------|---------|
-| Manage everything (menu) | `./scripts/manager.sh` |
-| Start everything | `docker compose up -d` |
-| Check if DB is OK | `./scripts/status.sh` |
-| Create project DB (owner + read + admin) | `./scripts/create-db.sh myapp` |
-| Add read/write user | `./scripts/add-user.sh myapp read USER` |
-| Verify user isolation | `./scripts/list-access.sh` |
-| Backup one database | `./scripts/backup.sh myapp` |
-| Backup everything | `./scripts/backup.sh` |
-| See backup files | `./scripts/backup.sh --list` |
-| Restore a backup | `./scripts/restore.sh backups/FILE.sql.gz myapp` |
-| Open SQL shell | `docker compose exec postgres psql -U appuser -d postgres` |
+| Interactive menu | `./bin/manager.sh` |
+| Start stack | `docker compose up -d` |
+| Health check | `./scripts/overview/status.sh` |
+| Database stats | `./scripts/overview/db-stats.sh` |
+| Active connections | `./scripts/overview/connections.sh` |
+| Table sizes | `./scripts/overview/db-tables.sh myapp` |
+| View logs | `./scripts/overview/logs.sh --tail 50` |
+| List databases | `./scripts/databases/list-dbs.sh` |
+| Create project DB | `./scripts/databases/create-db.sh myapp` |
+| Connection strings | `./scripts/databases/conn-info.sh myapp` |
+| List users | `./scripts/users/list-access.sh` |
+| Add user | `./scripts/users/add-user.sh myapp read USER` |
+| Reset password | `./scripts/users/reset-password.sh USER` |
+| Backup | `./scripts/backups/backup.sh myapp` |
+| List backups | `./scripts/backups/list-backups.sh` |
+| Restore | `./scripts/backups/restore.sh FILE myapp` |
+| SQL shell | `./scripts/tools/psql.sh` |
 
 ---
 

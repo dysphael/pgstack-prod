@@ -30,7 +30,7 @@ docker compose up -d
 4. Make sure PostgreSQL is running:
 
 ```bash
-./scripts/status.sh
+./scripts/overview/status.sh
 ```
 
 You should see `PostgreSQL: ready`.
@@ -44,7 +44,7 @@ You should see `PostgreSQL: ready`.
 Replace `myapp` with your real database name:
 
 ```bash
-./scripts/backup.sh myapp
+./scripts/backups/backup.sh myapp
 ```
 
 **What happens:**
@@ -55,13 +55,13 @@ Replace `myapp` with your real database name:
 ### Backup all project databases
 
 ```bash
-./scripts/backup.sh
+./scripts/backups/backup.sh
 ```
 
 ### List existing backups
 
 ```bash
-./scripts/backup.sh --list
+./scripts/backups/list-backups.sh
 ```
 
 Example output:
@@ -79,7 +79,7 @@ backups/backup_myapp_20260115_030000.sql.gz   2.4M
 ### Step 1 — find your backup file
 
 ```bash
-./scripts/backup.sh --list
+./scripts/backups/list-backups.sh
 ```
 
 Copy the full filename, for example:
@@ -91,7 +91,7 @@ backups/backup_myapp_20260115_030000.sql.gz
 ### Step 2 — run the restore
 
 ```bash
-./scripts/restore.sh backups/backup_myapp_20260115_030000.sql.gz myapp
+./scripts/backups/restore.sh backups/backup_myapp_20260115_030000.sql.gz myapp
 ```
 
 Replace:
@@ -131,7 +131,7 @@ crontab -e
 ### Step 2 — add this line at the bottom
 
 ```cron
-0 3 * * * cd /root/pgstack-prod && ./scripts/backup.sh >> ./logs/backup.log 2>&1
+0 3 * * * cd /root/pgstack-prod && ./scripts/backups/backup.sh >> ./logs/backup.log 2>&1
 ```
 
 **Change `/root/pgstack-prod`** if your project is in a different folder.
@@ -153,7 +153,7 @@ crontab -l
 |------|---------|
 | `0 3 * * *` | Every day at 03:00 |
 | `cd /root/pgstack-prod` | Go to project folder |
-| `./scripts/backup.sh` | Run backup |
+| `./scripts/backups/backup.sh` | Run backup |
 | `>> ./logs/backup.log` | Save output to a log file |
 
 ---
@@ -225,7 +225,7 @@ docker compose exec postgres psql -U appuser -d postgres -c "CREATE DATABASE mya
 
 ### Restore says file not found
 
-Run `./scripts/backup.sh --list` and copy the exact filename.
+Run `./scripts/backups/list-backups.sh` and copy the exact filename.
 
 ### Backup file is very small (e.g. 20 bytes)
 
@@ -241,10 +241,10 @@ docker compose logs postgres
 
 | Task | Command |
 |------|---------|
-| Backup one DB | `./scripts/backup.sh myapp` |
-| Backup all DBs | `./scripts/backup.sh` |
-| List backups | `./scripts/backup.sh --list` |
-| Restore | `./scripts/restore.sh backups/FILE.sql.gz myapp` |
+| Backup one DB | `./scripts/backups/backup.sh myapp` |
+| Backup all DBs | `./scripts/backups/backup.sh` |
+| List backups | `./scripts/backups/list-backups.sh` |
+| Restore | `./scripts/backups/restore.sh backups/FILE.sql.gz myapp` |
 | View log files | `tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log` |
 | List tables | `docker compose exec postgres psql -U appuser -d myapp -c "\dt"` |
 

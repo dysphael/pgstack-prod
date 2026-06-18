@@ -207,7 +207,7 @@ print_user_summary() {
   echo "    SELECT app.provision_user('new_user', 'read',  'password');"
   echo "    SELECT app.provision_user('new_user', 'write', 'password');"
   echo ""
-  echo "  Or from server: ./scripts/add-user.sh ${db} read|write USERNAME"
+  echo "  Or from server: ./scripts/users/add-user.sh ${db} read|write USERNAME"
   echo "  Tables use schema: app"
   echo "  Server admin ${POSTGRES_USER} is for backups only — not for apps."
 }

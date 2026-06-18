@@ -64,3 +64,11 @@ pick_from_list() {
   PICK_RESULT="${items[$((choice - 1))]}"
   return 0
 }
+
+# Prompt to pick a project database. Sets PICK_RESULT. Returns 1 on cancel.
+pick_project_db() {
+  local prompt="${1:-Select database:}"
+  mapfile -t DBS < <(list_project_dbs)
+  [[ ${#DBS[@]} -gt 0 ]] || { echo "No project databases found." >&2; return 1; }
+  pick_from_list "$prompt" "${DBS[@]}"
+}

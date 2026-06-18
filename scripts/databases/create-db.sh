@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Create an isolated project database with owner, read-only, and DB-admin users.
 #
-# Usage: ./scripts/create-db.sh <database>
+# Usage: ./scripts/databases/create-db.sh <database>
 
 set -euo pipefail
-source "$(dirname "$0")/_common.sh"
-source "$(dirname "$0")/_db-users.sh"
+source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"
+source "${ROOT}/lib/db-users.sh"
 
 DB="${1:-}"
-[[ -n "$DB" ]] || { echo "Usage: ./scripts/create-db.sh <database>" >&2; exit 1; }
+[[ -n "$DB" ]] || { echo "Usage: ./scripts/databases/create-db.sh <database>" >&2; exit 1; }
 valid_db_name "$DB" || { echo "ERROR: invalid database name." >&2; exit 1; }
 
 OWNER="${DB}_owner"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # List project users, access level, and database isolation.
-# Usage: ./scripts/list-access.sh [database]
+# Usage: ./scripts/users/list-access.sh [database]
 
 set -euo pipefail
-source "$(dirname "$0")/_common.sh"
+source "$(cd "$(dirname "$0")/../.." && pwd)/lib/init.sh"
 set_env
 require_postgres
 

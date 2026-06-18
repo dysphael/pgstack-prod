@@ -11,13 +11,13 @@ Production PostgreSQL 16 with persistent storage and DNS-based access for applic
 cp .env.example .env
 nano .env                    # set POSTGRES_PASSWORD and POSTGRES_HOST
 docker compose up -d         # creates folders and starts PostgreSQL
-./scripts/manager.sh         # interactive manager (recommended)
+./bin/manager.sh              # interactive manager (or ./manager.sh)
 ```
 
 Or run individual scripts:
 
 ```bash
-./scripts/status.sh          # verify everything is healthy
+./scripts/overview/status.sh   # verify everything is healthy
 ```
 
 ## DNS
@@ -50,7 +50,7 @@ Each project gets **one database** and **three users**:
 | `myapp_admin` | Create read/write users for `myapp` only | **No** (management) |
 
 ```bash
-./scripts/create-db.sh myapp
+./scripts/databases/create-db.sh myapp
 ```
 
 Creates `myapp` plus `myapp_owner`, `myapp_read`, and `myapp_admin` (you set each password).
@@ -70,8 +70,8 @@ postgresql://myapp_read:PASSWORD@db.yourdomain.com:5432/myapp
 **Add more users later:**
 
 ```bash
-./scripts/add-user.sh myapp read analytics
-./scripts/add-user.sh myapp write worker
+./scripts/users/add-user.sh myapp read analytics
+./scripts/users/add-user.sh myapp write worker
 ```
 
 **Or let the DB admin create users** (logged in as `myapp_admin`):
@@ -84,8 +84,8 @@ SELECT app.provision_user('worker',    'write', 'password');
 Verify isolation:
 
 ```bash
-./scripts/list-access.sh
-./scripts/list-access.sh myapp
+./scripts/users/list-access.sh
+./scripts/users/list-access.sh myapp
 ```
 
 ## Logs (persistent files)
@@ -105,11 +105,11 @@ Folders `logs/postgres/` and `backups/` are created automatically on `docker com
 
 | Task | Command |
 |------|---------|
-| Backup one database | `./scripts/backup.sh myapp` |
-| Backup all databases | `./scripts/backup.sh` |
-| List backup files | `./scripts/backup.sh --list` |
-| Restore a backup | `./scripts/restore.sh backups/backup_myapp_DATE.sql.gz myapp` |
-| Health check | `./scripts/status.sh` |
+| Backup one database | `./scripts/backups/backup.sh myapp` |
+| Backup all databases | `./scripts/backups/backup.sh` |
+| List backup files | `./scripts/backups/list-backups.sh` |
+| Restore a backup | `./scripts/backups/restore.sh backups/backup_myapp_DATE.sql.gz myapp` |
+| Health check | `./scripts/overview/status.sh` |
 
 See **[docs/SCRIPTS.md](docs/SCRIPTS.md)** for what each script does.  
 See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough.
@@ -128,7 +128,7 @@ See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough
 |----------|---------|
 | Firewall | `sudo ufw allow from APP_SERVER_IP to any port 5432 proto tcp` |
 | Strong password | 32+ random characters in `.env` |
-| Per-project users | `./scripts/create-db.sh myapp` — owner + read + admin per DB |
+| Per-project users | `./scripts/databases/create-db.sh myapp` — owner + read + admin per DB |
 | Localhost only | `POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432` if apps run on the same VPS |
 | Copy backups off-server | `scp` or cloud sync — see [docs/BACKUP.md](docs/BACKUP.md) |
 
@@ -171,12 +171,14 @@ Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose rest
 ## Operations
 
 ```bash
-./scripts/manager.sh         # interactive menu for all tasks
-./scripts/status.sh
+./bin/manager.sh                              # interactive menu
+./scripts/overview/db-stats.sh                # sizes, connections, cache hit
+./scripts/overview/connections.sh             # active queries
+./scripts/overview/logs.sh --tail 50          # recent log lines
+./scripts/databases/conn-info.sh myapp        # connection strings
 docker compose logs -f postgres
-docker compose exec postgres psql -U appuser -d postgres
 docker compose restart postgres
-docker compose down              # stops container, keeps data
+docker compose down                           # stops container, keeps data
 ```
 
 **Never run** `docker compose down -v` in production.
@@ -185,22 +187,24 @@ docker compose down              # stops container, keeps data
 
 ```text
 pgstack-prod/
+├── manager.sh                  # shortcut → bin/manager.sh
+├── bin/
+│   └── manager.sh              # interactive menu
+├── lib/                        # shared helpers (internal)
+├── scripts/
+│   ├── overview/               # status, stats, connections, logs
+│   ├── databases/              # create, list, drop, conn-info
+│   ├── users/                  # add, list, reset, drop
+│   ├── backups/                # backup, list, restore
+│   └── tools/                  # psql shell
 ├── docker-compose.yml
 ├── docs/
-│   ├── SCRIPTS.md              # quick guide for every script
-│   └── BACKUP.md               # beginner backup/restore guide
-├── logs/postgres/              # persistent PostgreSQL log files
-├── backups/                    # backup .sql.gz files
-├── postgres/
-│   ├── entrypoint-wrapper.sh
-│   ├── conf/postgresql.conf
-│   └── init/01-extensions.sql
-└── scripts/
-    ├── manager.sh              # interactive menu (start here)
-    ├── status.sh               # health check
-    ├── create-db.sh            # owner + read + admin per project
-    ├── add-user.sh             # add read/write user to a project
-    ├── list-access.sh          # verify user isolation
-    ├── backup.sh
-    └── restore.sh
+│   ├── SCRIPTS.md
+│   └── BACKUP.md
+├── logs/postgres/
+├── backups/
+└── postgres/
+    ├── entrypoint-wrapper.sh
+    ├── conf/postgresql.conf
+    └── init/01-extensions.sql
 ```
