@@ -383,7 +383,7 @@ prompt_add_user_interactive() {
   [[ -n "$user" ]] || return 1
 
   pw="$(resolve_app_password "$user")"
-  add_project_user "$db" "$access" "$user" "$pw"
+  add_project_user "$db" "$access" "$user" "$pw" || return 1
   echo ""
   echo "OK — ${access} user '${user}' added"
   print_connection_string "$user" "$db"
