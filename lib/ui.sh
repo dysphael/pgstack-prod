@@ -231,7 +231,8 @@ ui_help_screen() {
 
 ui_pause() {
   echo ""
-  ui_dim "  [Enter] continue   [h] home"
+  ui_dim "  ---"
+  ui_dim "  [Enter] return to menu   [h] main menu"
   read -r -p "  > " _ui_pause_input
   case "${_ui_pause_input:-}" in
     h|H) return 2 ;;

@@ -21,7 +21,10 @@ run() {
     ui_dim "Run: git pull"
     return 1
   }
-  PGSTACK_UI=1 PGSTACK_TABLE_WIDTH=$((UI_WIDTH - 4)) "$script" "${@:3}"
+  # Subshell: script "exit 1" must not kill the manager (set -e).
+  (
+    PGSTACK_UI=1 PGSTACK_TABLE_WIDTH=$((UI_WIDTH - 4)) "$script" "${@:3}"
+  )
 }
 
 pause_continue() {
@@ -304,8 +307,10 @@ submenu_tools() {
         ui_action_header "psql shell"
         ui_info "Entering interactive psql. Type \\q to return to menu."
         echo ""
-        action_psql
-        return 0
+        action_psql || true
+        pause_continue
+        [[ $GO_HOME -eq 1 ]] && return 0
+        continue
         ;;
       0) return 0 ;;
       *) ui_invalid; pause_continue ;;
