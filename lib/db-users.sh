@@ -63,8 +63,12 @@ set_role_password() {
 
 verify_role_login() {
   local user="$1" pw="$2" db="$3"
+  local ip
+  # 127.0.0.1 inside the container uses trust in default pg_hba — does not test the password.
+  ip="$(docker compose exec -T postgres hostname -i 2>/dev/null | awk '{print $1}')"
+  [[ -n "$ip" ]] || return 1
   docker compose exec -T -e PGPASSWORD="$pw" postgres \
-    psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1
+    psql -v ON_ERROR_STOP=1 -h "$ip" -U "$user" -d "$db" -tc "SELECT 1" 2>/dev/null | grep -q 1
 }
 
 isolate_to_db() {
@@ -288,11 +292,14 @@ add_project_user() {
   esac
 
   if ! verify_role_login "$user" "$pw" "$db"; then
-    echo "ERROR: user '${user}' was configured but login verification failed." >&2
-    echo "The password stored in PostgreSQL does not match what you entered." >&2
-    echo "Fix: ./scripts/users/reset-password.sh ${user}" >&2
+    echo "" >&2
+    echo "ERROR: user '${user}' was configured but password verification FAILED." >&2
+    echo "Remote apps (Django) will not connect. This is a pgstack bug if you saw OK before." >&2
+    echo "Fix with the EXACT password from your app .env:" >&2
+    echo "  PGSTACK_PASSWORD='...' ./scripts/users/set-password.sh ${user}" >&2
     return 1
   fi
+  echo "OK — login verified for '${user}' on '${db}' (remote-style SCRAM)"
 }
 
 print_connection_string() {
@@ -357,16 +364,26 @@ prompt_add_user_interactive() {
 }
 
 interactive_add_users() {
-  local db="$1" answer
+  local db="$1" answer added=0
 
   echo ""
   echo "Users are optional. You choose access, username, and password for each."
+  echo "Apps need an owner/write user — use the same password as DATABASE_URL in your .env."
   while true; do
     read -r -p "Add a user? (y/n): " answer
     [[ "$answer" =~ ^[yY] ]] || break
-    prompt_add_user_interactive "$db" || true
+    if prompt_add_user_interactive "$db"; then
+      added=$((added + 1))
+    fi
     echo ""
   done
+
+  if [[ "$added" -eq 0 ]]; then
+    echo ""
+    echo "WARNING: no users added — apps (Django, etc.) cannot connect yet."
+    echo "Add one now: ./scripts/users/add-user.sh ${db} owner YOUR_USER"
+    echo "Or set password from .env: PGSTACK_PASSWORD='...' ./scripts/users/set-password.sh YOUR_USER"
+  fi
 }
 
 # Login roles with CONNECT on a database (project users only).

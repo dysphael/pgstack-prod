@@ -51,3 +51,15 @@ for user in "${EXCLUSIVE_USERS[@]}"; do
 done
 
 echo "OK dropped ${DB}"
+
+if [[ ${#EXCLUSIVE_USERS[@]} -gt 0 ]]; then
+  echo ""
+  echo "=== IMPORTANT — app users were removed ==="
+  printf '  %s\n' "${EXCLUSIVE_USERS[@]}"
+  echo ""
+  echo "Your app (.env DATABASE_URL) will FAIL until you:"
+  echo "  1) ./scripts/databases/create-db.sh ${DB}   (or create-db + add-user)"
+  echo "  2) ./scripts/users/add-user.sh ${DB} owner USER"
+  echo "  3) PGSTACK_PASSWORD='exact-.env-password' ./scripts/users/set-password.sh USER"
+  echo "  4) ./scripts/tools/diagnose-user.sh USER ${DB}"
+fi
