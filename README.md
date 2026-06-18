@@ -1,51 +1,103 @@
 # pgstack-prod
 
-PostgreSQL 16 em produção — Docker Compose lite com persistência.
+Production PostgreSQL 16 — DNS-based access for your applications (no admin UI).
 
-## Quick start
+## DNS setup (required)
+
+Create an **A record** pointing to this server's public IP:
+
+```text
+db.yourdomain.com  →  YOUR_VPS_PUBLIC_IP
+```
+
+Use the same hostname as `POSTGRES_HOST` in `.env`.
+
+## Deploy
 
 ```bash
 cp .env.example .env
-nano .env          # set a strong POSTGRES_PASSWORD
+nano .env
 docker compose up -d
-docker compose ps  # wait for "healthy"
+docker compose ps   # wait for "healthy"
 ```
 
-## Environment
+## Application connection
 
-| Variable | Description |
-|----------|-------------|
-| `POSTGRES_USER` | Application user | `appuser` |
-| `POSTGRES_PASSWORD` | User password | strong secret |
-| `POSTGRES_DB` | Database created on **first boot only** | `postgres` (recommended) |
+Use `POSTGRES_HOST` in your apps:
 
-`POSTGRES_DB=postgres` uses the standard admin database. Project databases (`blockway`, `hyperfx`, etc.) are created manually when needed.
+```text
+postgresql://appuser:PASSWORD@db.yourdomain.com:5432/DATABASE_NAME
+```
+
+Example:
+
+```env
+DATABASE_URL=postgresql://appuser:PASSWORD@db.yourdomain.com:5432/myapp
+```
+
+Apps on the **same VPS** can also use:
+
+```text
+postgresql://appuser:PASSWORD@localhost:5432/DATABASE_NAME
+```
 
 ## Create a project database
 
 ```bash
-docker compose exec postgres psql -U appuser -d postgres -c "CREATE DATABASE blockway;"
+docker compose exec postgres psql -U appuser -d postgres -c "CREATE DATABASE myapp;"
 ```
 
-Connect to it:
+## Will DNS work? (checklist)
 
-```text
-postgresql://appuser:PASSWORD@localhost:5432/blockway
-```
+This stack is configured for remote access via DNS when these conditions are met:
 
-List databases:
+| Requirement | Status in this repo |
+|-------------|---------------------|
+| DNS A record → VPS public IP | You configure at your DNS provider |
+| PostgreSQL listens on all interfaces | `listen_addresses=*` in `docker-compose.yml` |
+| Port 5432 published on the host | `POSTGRES_PORT_PUBLISH=5432:5432` (default) |
+| Password authentication | `POSTGRES_USER` / `POSTGRES_PASSWORD` in `.env` |
+| Firewall allows port 5432 | You configure on the VPS (see below) |
+
+**Verify after deploy:**
 
 ```bash
-docker compose exec postgres psql -U appuser -d postgres -c "\l"
+# 1. DNS resolves to your VPS IP
+dig +short A db.yourdomain.com
+
+# 2. Port 5432 is open (from your app server or local machine)
+nc -zv db.yourdomain.com 5432
+
+# 3. PostgreSQL accepts connections (replace PASSWORD)
+psql "postgresql://appuser:PASSWORD@db.yourdomain.com:5432/postgres" -c "SELECT 1;"
 ```
 
-## Production defaults
+If step 1 works but step 2 fails, open port 5432 in the VPS firewall and cloud security group.
 
-- Port `5432` bound to `127.0.0.1` only (not exposed to the internet)
-- Data stored in Docker volume `pgdata`
-- UTF-8 encoding, `data-checksums` on new installs
-- Healthcheck, log rotation, graceful shutdown
-- Container restarts automatically (`unless-stopped`)
+## Security
+
+Port `5432` is exposed on the network. Restrict it to your application servers:
+
+```bash
+sudo ufw allow from APP_SERVER_IP to any port 5432 proto tcp
+sudo ufw enable
+```
+
+For **localhost-only** access on the VPS, set in `.env`:
+
+```env
+POSTGRES_PORT_PUBLISH=127.0.0.1:5432:5432
+```
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `POSTGRES_USER` | Database user |
+| `POSTGRES_PASSWORD` | Database password |
+| `POSTGRES_DB` | Database created on first boot (`postgres` recommended) |
+| `POSTGRES_HOST` | DNS hostname used in application connection strings |
+| `POSTGRES_PORT_PUBLISH` | Port mapping (`5432:5432` or `127.0.0.1:5432:5432`) |
 
 ## Operations
 
@@ -53,25 +105,19 @@ docker compose exec postgres psql -U appuser -d postgres -c "\l"
 docker compose ps
 docker compose logs -f postgres
 docker compose exec postgres psql -U appuser -d postgres
-docker compose restart postgres
-docker compose down              # stops container, keeps data
+docker compose down
 ```
 
-**Never run** `docker compose down -v` in production — it deletes the volume and all data.
+**Never run** `docker compose down -v` in production — it deletes all data.
 
 ## Backup
 
 ```bash
-docker compose exec -T postgres pg_dump -U appuser blockway | gzip > backup_blockway_$(date +%Y%m%d).sql.gz
+docker compose exec -T postgres pg_dump -U appuser myapp | gzip > backup_myapp_$(date +%Y%m%d).sql.gz
 ```
 
-Restore:
+## SSL note
 
-```bash
-gunzip -c backup_blockway_20260101.sql.gz | docker compose exec -T postgres psql -U appuser -d blockway
-```
+PostgreSQL uses port **5432** with the `postgresql://` protocol — not HTTPS on port 443. DNS only resolves the hostname to your VPS IP.
 
-## Notes
-
-- `POSTGRES_DB` only applies on the **first** initialization (empty volume). Changing it later does not rename existing data.
-- Other Docker containers on the same host can reach Postgres via `host.docker.internal:5432` (Docker Desktop) or the host gateway IP on Linux.
+For encrypted connections, configure PostgreSQL SSL or use a VPN/SSH tunnel between your apps and the database server.

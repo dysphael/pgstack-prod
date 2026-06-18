@@ -1,5 +1,5 @@
-# PostgreSQL 16 — production (lite)
-# Usage: cp .env.example .env && docker compose up -d
+# PostgreSQL 16 — production
+# DNS: point POSTGRES_HOST → server IP, then docker compose up -d
 
 services:
   postgres:
@@ -15,11 +15,14 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --data-checksums"
       TZ: UTC
     ports:
-      # Exposed only on loopback — apps on the VPS connect via localhost:5432
-      - "127.0.0.1:5432:5432"
+      - "${POSTGRES_PORT_PUBLISH:-5432:5432}"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    command: postgres -c timezone=UTC -c log_timezone=UTC
+    command: >
+      postgres
+      -c listen_addresses=*
+      -c timezone=UTC
+      -c log_timezone=UTC
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-postgres}"]
       interval: 10s
