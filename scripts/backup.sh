@@ -8,19 +8,10 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-if [[ ! -f .env ]]; then
-  echo ""
-  echo "ERROR: .env file not found."
-  echo "Fix:   cp .env.example .env && nano .env"
-  echo ""
-  exit 1
-fi
-
-# shellcheck disable=SC1091
-source .env
+# shellcheck source=_common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+set_env
+require_postgres
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 mkdir -p "$BACKUP_DIR"
@@ -48,13 +39,14 @@ backup_db() {
   echo "→ Backing up database: ${db}"
   docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$db" | gzip > "$file"
 
-  if [[ -f "$file" ]]; then
-    echo "  Saved: ${file}"
-    echo "  Size:  $(du -h "$file" | cut -f1)"
-  else
-    echo "  ERROR: backup file was not created." >&2
+  if [[ ! -s "$file" ]]; then
+    echo "  ERROR: backup file is empty. Check: docker compose logs postgres" >&2
+    rm -f "$file"
     exit 1
   fi
+
+  echo "  Saved: ${file}"
+  echo "  Size:  $(du -h "$file" | cut -f1)"
 }
 
 if [[ "${TARGET}" == "--list" || "${TARGET}" == "-l" ]]; then
@@ -68,6 +60,10 @@ echo "  PostgreSQL backup"
 echo "========================================"
 
 if [[ -n "$TARGET" ]]; then
+  if ! valid_db_name "$TARGET"; then
+    echo "ERROR: invalid database name '${TARGET}'." >&2
+    exit 1
+  fi
   backup_db "$TARGET"
 else
   mapfile -t DATABASES < <(

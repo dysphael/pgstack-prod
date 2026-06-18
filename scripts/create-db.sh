@@ -4,29 +4,29 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+# shellcheck source=_common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 DB_NAME="${1:-}"
 OWNER="${2:-${DB_NAME}_app}"
-
-if [[ ! -f .env ]]; then
-  echo "ERROR: .env not found." >&2
-  exit 1
-fi
 
 if [[ -z "$DB_NAME" ]]; then
   echo "Usage: ./scripts/create-db.sh <database_name> [owner_user]" >&2
   exit 1
 fi
 
-if [[ ! "$DB_NAME" =~ ^[a-z][a-z0-9_]*$ ]]; then
+if ! valid_db_name "$DB_NAME"; then
   echo "ERROR: invalid database name '${DB_NAME}'." >&2
   exit 1
 fi
 
-# shellcheck disable=SC1091
-source .env
+if ! valid_db_name "$OWNER"; then
+  echo "ERROR: invalid owner name '${OWNER}'." >&2
+  exit 1
+fi
+
+set_env
+require_postgres
 
 read -r -s -p "Password for new user '${OWNER}': " OWNER_PASSWORD
 echo

@@ -9,10 +9,9 @@ Production PostgreSQL 16 with persistent storage and DNS-based access for applic
 ```bash
 cp .env.example .env
 nano .env                    # set POSTGRES_PASSWORD and POSTGRES_HOST
-mkdir -p logs/postgres backups
+./scripts/setup.sh           # create folders and fix log permissions
 docker compose up -d
-docker compose ps            # wait for "healthy"
-chmod +x scripts/*.sh
+./scripts/status.sh          # verify everything is healthy
 ```
 
 ## DNS
@@ -62,6 +61,13 @@ tail -f logs/postgres/postgresql-$(date +%Y-%m-%d).log
 
 Logged events: connections, disconnections, schema changes (DDL), slow queries (> 500 ms).
 
+If logs are not created, run:
+
+```bash
+sudo chown -R 70:70 logs/postgres
+docker compose restart postgres
+```
+
 ## Backup & restore (summary)
 
 Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
@@ -72,8 +78,7 @@ Full step-by-step guide for beginners: **[docs/BACKUP.md](docs/BACKUP.md)**
 | Backup all databases | `./scripts/backup.sh` |
 | List backup files | `./scripts/backup.sh --list` |
 | Restore a backup | `./scripts/restore.sh backups/backup_myapp_DATE.sql.gz myapp` |
-
-Backups are saved in `backups/` as `.sql.gz` files.
+| Health check | `./scripts/status.sh` |
 
 ## Verify DNS connectivity
 
@@ -103,10 +108,17 @@ Backups are saved in `backups/` as `.sql.gz` files.
 | Tuning | `postgres/conf/postgresql.conf` (defaults for 2 GB RAM) |
 | Extensions | `uuid-ossp`, `pg_stat_statements` (first boot only) |
 | Memory limit | `POSTGRES_MEM_LIMIT` (default 1536M) |
+| Auth | `scram-sha-256` |
 
 ### Scaling memory
 
 Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose restart postgres`.
+
+| VPS RAM | `shared_buffers` | `effective_cache_size` |
+|---------|------------------|------------------------|
+| 2 GB | 512MB | 1536MB |
+| 4 GB | 1GB | 3GB |
+| 8 GB | 2GB | 6GB |
 
 ## Environment variables
 
@@ -115,7 +127,7 @@ Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose rest
 | `POSTGRES_USER` | Admin/application user |
 | `POSTGRES_PASSWORD` | User password |
 | `POSTGRES_DB` | Database created on first boot (`postgres` recommended) |
-| `POSTGRES_HOST` | DNS hostname for connection strings |
+| `POSTGRES_HOST` | DNS hostname for connection strings (not used by Docker) |
 | `POSTGRES_PORT_PUBLISH` | `5432:5432` or `127.0.0.1:5432:5432` |
 | `POSTGRES_MEM_LIMIT` | Container memory cap (e.g. `1536M`) |
 | `BACKUP_DIR` | Backup folder (default `./backups`) |
@@ -124,7 +136,7 @@ Edit `postgres/conf/postgresql.conf` for your VPS RAM, then `docker compose rest
 ## Operations
 
 ```bash
-docker compose ps
+./scripts/status.sh
 docker compose logs -f postgres
 docker compose exec postgres psql -U appuser -d postgres
 docker compose restart postgres
@@ -138,13 +150,15 @@ docker compose down              # stops container, keeps data
 ```text
 pgstack-prod/
 ├── docker-compose.yml
-├── docs/BACKUP.md              # beginner backup/restore guide
+├── docs/BACKUP.md
 ├── logs/postgres/              # persistent PostgreSQL log files
 ├── backups/                    # backup .sql.gz files
 ├── postgres/
 │   ├── conf/postgresql.conf
 │   └── init/01-extensions.sql
 └── scripts/
+    ├── setup.sh                # first-time folder setup
+    ├── status.sh               # health check
     ├── backup.sh
     ├── restore.sh
     └── create-db.sh

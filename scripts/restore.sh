@@ -8,19 +8,11 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+# shellcheck source=_common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 FILE="${1:-}"
 DB_NAME="${2:-}"
-
-if [[ ! -f .env ]]; then
-  echo ""
-  echo "ERROR: .env file not found."
-  echo "Fix:   cp .env.example .env && nano .env"
-  echo ""
-  exit 1
-fi
 
 if [[ -z "$FILE" || -z "$DB_NAME" ]]; then
   echo ""
@@ -35,6 +27,11 @@ if [[ -z "$FILE" || -z "$DB_NAME" ]]; then
   exit 1
 fi
 
+if ! valid_db_name "$DB_NAME"; then
+  echo "ERROR: invalid database name '${DB_NAME}'." >&2
+  exit 1
+fi
+
 if [[ ! -f "$FILE" ]]; then
   echo ""
   echo "ERROR: backup file not found: ${FILE}"
@@ -45,17 +42,17 @@ if [[ ! -f "$FILE" ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC1091
-source .env
+set_env
+require_postgres
 
 echo ""
 echo "========================================"
 echo "  PostgreSQL restore"
 echo "========================================"
 echo ""
-echo "  Backup file:  ${FILE}"
+echo "  Backup file:     ${FILE}"
 echo "  Target database: ${DB_NAME}"
-echo "  File size:    $(du -h "$FILE" | cut -f1)"
+echo "  File size:       $(du -h "$FILE" | cut -f1)"
 echo ""
 echo "  WARNING: existing data in '${DB_NAME}' will be replaced."
 echo ""
@@ -81,7 +78,7 @@ if [[ -z "$DB_EXISTS" ]]; then
 fi
 
 echo "→ Restoring backup into '${DB_NAME}'..."
-gunzip -c "$FILE" | docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$DB_NAME"
+gunzip -c "$FILE" | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME"
 
 echo ""
 echo "Done. Database '${DB_NAME}' was restored from:"
