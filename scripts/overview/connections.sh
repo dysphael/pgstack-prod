@@ -19,18 +19,38 @@ fi
 echo "Active connections:"
 echo ""
 
-docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+CONN_SQL="
 SELECT
-  a.pid,
+  a.pid::text AS pid,
   a.usename AS user,
   a.datname AS database,
-  a.client_addr,
+  coalesce(a.client_addr::text, '') AS client,
   a.state,
-  now() - a.query_start AS query_duration,
-  left(a.query, 80) AS query
+  coalesce((now() - a.query_start)::text, '') AS duration,
+  left(replace(a.query, E'\n', ' '), 40) AS query
 FROM pg_stat_activity a
 WHERE a.pid <> pg_backend_pid()
   AND a.datname IS NOT NULL
   ${FILTER_SQL}
 ORDER BY a.query_start NULLS LAST;
 "
+
+if [[ -n "${PGSTACK_UI:-}" ]]; then
+  pg_print_table postgres "$CONN_SQL" 6 10 10 14 8 10 40
+else
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+    SELECT
+      a.pid,
+      a.usename AS user,
+      a.datname AS database,
+      a.client_addr,
+      a.state,
+      now() - a.query_start AS query_duration,
+      left(a.query, 80) AS query
+    FROM pg_stat_activity a
+    WHERE a.pid <> pg_backend_pid()
+      AND a.datname IS NOT NULL
+      ${FILTER_SQL}
+    ORDER BY a.query_start NULLS LAST;
+  "
+fi

@@ -94,12 +94,12 @@ ui_box_open() {
   local inner title_len dash_count
   inner="$(ui_inner_width)"
   title_len=${#title}
-  dash_count=$((inner - title_len - 3))
+  dash_count=$((UI_WIDTH - title_len - 6))
   if (( dash_count < 0 )); then
     dash_count=0
   fi
   ui_c "$UI_CYAN"
-  printf '┌─ %s %s┐\n' "$title" "$(ui_repeat '─' "$dash_count")"
+  printf '+-- %s %s+\n' "$title" "$(ui_repeat '-' "$dash_count")"
   ui_c "$UI_RESET"
 }
 
@@ -107,7 +107,7 @@ ui_box_close() {
   local inner
   inner="$(ui_inner_width)"
   ui_c "$UI_CYAN"
-  printf '└%s┘\n' "$(ui_repeat '─' "$inner")"
+  printf '+%s+\n' "$(ui_repeat '-' "$inner")"
   ui_c "$UI_RESET"
 }
 
@@ -115,7 +115,7 @@ ui_box_line() {
   local text="$1"
   local cw
   cw="$(ui_content_width)"
-  printf '│ %-*s │\n' "$cw" "$(ui_truncate "$text" "$cw")"
+  printf '| %-*s |\n' "$cw" "$(ui_truncate "$text" "$cw")"
 }
 
 ui_box_row() {
@@ -141,7 +141,7 @@ ui_rule() {
   local cw
   cw="$(ui_content_width)"
   ui_c "$UI_DIM"
-  printf '  %s\n' "$(ui_repeat '─' "$cw")"
+  printf '  %s\n' "$(ui_repeat '-' "$cw")"
   ui_c "$UI_RESET"
 }
 
@@ -200,12 +200,12 @@ ui_header_compact() {
 ui_breadcrumb() {
   local path="$1"
   ui_c "$UI_YELLOW"
-  printf '  ▸ %s\n' "$path"
+  printf '  > %s\n' "$path"
   ui_c "$UI_RESET"
 }
 
 ui_footer_hints() {
-  ui_dim "  Keys: 0 back/exit · h home · ? help · q quit"
+  ui_dim "  Keys: 0 back/exit | h home | ? help | q quit"
 }
 
 ui_help_screen() {

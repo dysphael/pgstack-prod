@@ -16,7 +16,7 @@ HOST="${POSTGRES_HOST:-localhost}"
 echo "Connection strings for '${DB}' (schema: app):"
 echo ""
 
-docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+CONN_SQL="
 SELECT
   r.rolname AS user,
   CASE
@@ -31,6 +31,12 @@ WHERE d.datname = '${DB}'
   AND has_database_privilege(r.rolname, d.datname, 'CONNECT')
 ORDER BY access, r.rolname;
 "
+
+if [[ -n "${PGSTACK_UI:-}" ]]; then
+  pg_print_table postgres "$CONN_SQL" 16 10
+else
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "$CONN_SQL"
+fi
 
 echo ""
 echo "Format: postgresql://USER:PASSWORD@${HOST}:5432/${DB}"

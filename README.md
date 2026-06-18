@@ -17,30 +17,30 @@ docker compose up -d         # creates folders and starts PostgreSQL
 The manager is a colorized terminal UI (72-column layout) with a live system dashboard, boxed menus, breadcrumbs, and keyboard shortcuts.
 
 ```text
-┌─ pgstack ──────────────────────────────────────────────────────────┐
-│ Host           db.yourdomain.com                                     │
-│ Admin          blockway                                              │
-│ Status         ● ONLINE                                              │
-└──────────────────────────────────────────────────────────────────────┘
-  ▸ Main
++-- pgstack -----------------------------------------------------------+
+| Host           db.yourdomain.com                                     |
+| Admin          blockway                                              |
+| Status         ONLINE                                                |
++----------------------------------------------------------------------+
+  > Main
 
-┌─ System ───────────────────────────────────────────────────────────┐
-│ PostgreSQL     ONLINE                                                │
-│ Version        PG 16.14                                              │
-│ Uptime         02:15:30                                              │
-│ Databases      2 project · myapp, test                             │
-│ Backups        3 files (12M)                                         │
-│ Latest         2026-06-18 14:30:00                                   │
-│ Docker         postgres · running                                    │
-│ Backup dir     backups/                                              │
-│ Logs dir       logs/postgres/                                        │
-└──────────────────────────────────────────────────────────────────────┘
++-- System ------------------------------------------------------------+
+| PostgreSQL     ONLINE                                                |
+| Version        PG 16.14                                              |
+| Uptime         00:40:24                                              |
+| Databases      2 project: myapp, test                                 |
+| Backups        3 files (12M)                                         |
+| Latest         2026-06-18 14:30:00                                   |
+| Docker         postgres: running                                     |
+| Backup dir     backups/                                              |
+| Logs dir       logs/postgres/                                        |
++----------------------------------------------------------------------+
 
-┌─ Menu ─────────────────────────────────────────────────────────────┐
-│   1) Overview            status, stats, logs                         │
-│   2) Databases           create, list, drop                          │
-│  ...                                                                 │
-└──────────────────────────────────────────────────────────────────────┘
++-- Menu --------------------------------------------------------------+
+|   1) Overview           status, stats, logs                          |
+|   2) Databases          create, list, drop                           |
+|  ...                                                                 |
++----------------------------------------------------------------------+
 ```
 
 | Key | Action |

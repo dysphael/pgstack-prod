@@ -14,13 +14,19 @@ valid_db_name "$DB" || { echo "ERROR: invalid database name." >&2; exit 1; }
 echo "Tables in ${DB} (schema app):"
 echo ""
 
-docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$DB" -c "
+TABLES_SQL="
 SELECT
   schemaname AS schema,
   relname AS table,
   pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
-  n_live_tup AS rows
+  n_live_tup::text AS rows
 FROM pg_stat_user_tables
 WHERE schemaname = 'app'
 ORDER BY pg_total_relation_size(relid) DESC;
 "
+
+if [[ -n "${PGSTACK_UI:-}" ]]; then
+  pg_print_table "$DB" "$TABLES_SQL" 8 16 10 8
+else
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$DB" -c "$TABLES_SQL"
+fi

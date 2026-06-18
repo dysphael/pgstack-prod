@@ -21,20 +21,39 @@ echo ""
 if postgres_ready; then
   echo "PostgreSQL: ready"
   echo ""
-  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
-    SELECT
-      version() AS version,
-      pg_postmaster_start_time() AS started_at,
-      (SELECT count(*) FROM pg_stat_activity) AS connections;
-  "
-  echo ""
-  echo "Project databases:"
-  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
-    SELECT datname AS database, pg_size_pretty(pg_database_size(datname)) AS size
-    FROM pg_database
-    WHERE datistemplate = false AND datname <> 'postgres'
-    ORDER BY datname;
-  "
+
+  if [[ -n "${PGSTACK_UI:-}" ]]; then
+    echo "Server:"
+    pg_print_rows postgres "
+      SELECT
+        split_part(version(), ' on ', 1) AS version,
+        pg_postmaster_start_time()::text AS started_at,
+        (SELECT count(*)::text FROM pg_stat_activity) AS connections;
+    "
+    echo ""
+    echo "Project databases:"
+    pg_print_table postgres "
+      SELECT datname AS database, pg_size_pretty(pg_database_size(datname)) AS size
+      FROM pg_database
+      WHERE datistemplate = false AND datname <> 'postgres'
+      ORDER BY datname;
+    " 12 10
+  else
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+      SELECT
+        version() AS version,
+        pg_postmaster_start_time() AS started_at,
+        (SELECT count(*) FROM pg_stat_activity) AS connections;
+    "
+    echo ""
+    echo "Project databases:"
+    docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+      SELECT datname AS database, pg_size_pretty(pg_database_size(datname)) AS size
+      FROM pg_database
+      WHERE datistemplate = false AND datname <> 'postgres'
+      ORDER BY datname;
+    "
+  fi
 elif postgres_server_up; then
   echo "PostgreSQL: running (container healthy)"
   echo "Login failed for admin user '${POSTGRES_USER}'."

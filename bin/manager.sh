@@ -21,7 +21,7 @@ run() {
     ui_dim "Run: git pull"
     return 1
   }
-  "$script" "${@:3}"
+  PGSTACK_UI=1 PGSTACK_TABLE_WIDTH=$((UI_WIDTH - 4)) "$script" "${@:3}"
 }
 
 pause_continue() {
@@ -74,6 +74,7 @@ dashboard_live() {
     read -r pg_ver pg_uptime < <(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -Atc \
       "SELECT split_part(version(),' ',2), (now() - pg_postmaster_start_time())::text;" 2>/dev/null | tr '|' ' ') || true
     pg_ver="${pg_ver:-?}"
+    pg_uptime="${pg_uptime%%.*}"
     pg_uptime="${pg_uptime:-?}"
     ui_box_row "PostgreSQL" "ONLINE"
     ui_box_row "Version" "PG ${pg_ver}"
@@ -95,7 +96,7 @@ dashboard_live() {
     else
       db_list="none yet"
     fi
-    ui_box_row "Databases" "${db_count} project · ${db_list}"
+    ui_box_row "Databases" "${db_count} project: ${db_list}"
   else
     ui_box_row "Databases" "unavailable"
   fi
@@ -114,7 +115,7 @@ dashboard_live() {
   docker_state="not running"
   docker_state="$(docker compose ps postgres --format '{{.State}}' 2>/dev/null | head -1)" || docker_state="not running"
   docker_state="${docker_state:-not running}"
-  ui_box_row "Docker" "postgres · ${docker_state}"
+  ui_box_row "Docker" "postgres: ${docker_state}"
 
   backup_path="$(backup_dir | sed "s|$ROOT/||")"
   log_path="$(abs_path "${LOG_DIR:-./logs/postgres}" | sed "s|$ROOT/||")"
@@ -301,6 +302,8 @@ submenu_tools() {
         require_db_action || { pause_continue; continue; }
         ui_clear
         ui_action_header "psql shell"
+        ui_info "Entering interactive psql. Type \\q to return to menu."
+        echo ""
         action_psql
         return 0
         ;;

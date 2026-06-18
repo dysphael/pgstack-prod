@@ -9,8 +9,16 @@ require_postgres
 
 echo "Project databases:"
 echo ""
-docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c \
-  "SELECT datname AS database, pg_catalog.pg_get_userbyid(datdba) AS owner
-   FROM pg_database
-   WHERE datistemplate = false AND datname <> 'postgres'
-   ORDER BY datname;"
+
+LIST_SQL="
+SELECT datname AS database, pg_catalog.pg_get_userbyid(datdba) AS owner
+FROM pg_database
+WHERE datistemplate = false AND datname <> 'postgres'
+ORDER BY datname;
+"
+
+if [[ -n "${PGSTACK_UI:-}" ]]; then
+  pg_print_table postgres "$LIST_SQL" 14 14
+else
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "$LIST_SQL"
+fi

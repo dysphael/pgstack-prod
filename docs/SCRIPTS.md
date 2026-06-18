@@ -16,6 +16,7 @@ pgstack-prod/
 │   ├── common.sh
 │   ├── db-users.sh
 │   ├── backups.sh
+│   ├── pg-format.sh        # compact psql tables for manager
 │   └── ui.sh               # manager TUI (colors, boxes, picks)
 └── scripts/
     ├── overview/           # monitoring & logs
@@ -46,11 +47,22 @@ Interactive colorized TUI with a live dashboard (PostgreSQL, databases, backups,
 
 After an action finishes, press **Enter** to return to the menu or **`h`** to jump straight to the main screen.
 
-Submenus show a breadcrumb (`▸ Main > Backups`) and a compact header with host, admin user, and online status. The ASCII banner appears once at startup; other screens use the compact header.
+Submenus show a breadcrumb (`> Main > Backups`) and a compact header with host, admin user, and online status. The ASCII banner appears once at startup; other screens use the compact header.
 
 Default layout width is **72 columns** (override with `PGSTACK_UI_WIDTH=80`). Lines truncate with `...` when content is too long.
 
 Respects `NO_COLOR=1` and non-TTY output (plain text, no ANSI).
+
+### Compact output in the manager
+
+When a script is run from `./bin/manager.sh`, the manager sets `PGSTACK_UI=1` and `PGSTACK_TABLE_WIDTH` (default 68). Scripts that query PostgreSQL use [`lib/pg-format.sh`](lib/pg-format.sh) to print **fixed-width ASCII tables** instead of the wide aligned `psql` format.
+
+| Context | Table output |
+|---------|----------------|
+| Manager (`PGSTACK_UI=1`) | Compact columns, truncated to fit the UI |
+| CLI (`./scripts/...` directly) | Native `psql -c` aligned tables |
+
+**Exception:** **Tools > psql shell** opens the interactive `psql` REPL (`exec`). Type `\q` to return to the menu. Interactive output cannot be reformatted.
 
 ## CLI scripts
 

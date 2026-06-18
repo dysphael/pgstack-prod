@@ -13,18 +13,39 @@ LIMIT="${1:-15}"
 echo "Top ${LIMIT} slowest queries (by mean time):"
 echo ""
 
-docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+SLOW_SQL="
 SELECT
-  left(query, 100) AS query,
-  calls,
-  round(mean_exec_time::numeric, 2) AS mean_ms,
-  round(total_exec_time::numeric, 2) AS total_ms,
-  rows
+  left(replace(query, E'\n', ' '), 36) AS query,
+  calls::text AS calls,
+  round(mean_exec_time::numeric, 2)::text AS mean_ms,
+  round(total_exec_time::numeric, 2)::text AS total_ms,
+  rows::text AS rows
 FROM pg_stat_statements
 WHERE query NOT LIKE '%pg_stat_statements%'
 ORDER BY mean_exec_time DESC
 LIMIT ${LIMIT};
-" 2>/dev/null || {
-  echo "pg_stat_statements not available. Restart postgres after first install."
-  exit 1
-}
+"
+
+if [[ -n "${PGSTACK_UI:-}" ]]; then
+  if ! pg_query_csv postgres "$SLOW_SQL" >/dev/null 2>&1; then
+    echo "pg_stat_statements not available. Restart postgres after first install."
+    exit 1
+  fi
+  pg_print_table postgres "$SLOW_SQL" 36 6 8 8 6
+else
+  docker compose exec -T postgres psql -U "$POSTGRES_USER" -d postgres -c "
+    SELECT
+      left(query, 100) AS query,
+      calls,
+      round(mean_exec_time::numeric, 2) AS mean_ms,
+      round(total_exec_time::numeric, 2) AS total_ms,
+      rows
+    FROM pg_stat_statements
+    WHERE query NOT LIKE '%pg_stat_statements%'
+    ORDER BY mean_exec_time DESC
+    LIMIT ${LIMIT};
+  " 2>/dev/null || {
+    echo "pg_stat_statements not available. Restart postgres after first install."
+    exit 1
+  }
+fi
