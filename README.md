@@ -162,6 +162,34 @@ Copy the whole `data/` folder to migrate servers or for off-site backup.
 See **[docs/SCRIPTS.md](docs/SCRIPTS.md)** for what each script does.  
 See **[docs/BACKUP.md](docs/BACKUP.md)** for the full backup/restore walkthrough.
 
+## Important: after a restore, recreate the app user
+
+A backup contains **only the database data — not the users/roles**. Restore drops
+and recreates the database, so the previous app user (e.g. the Django user) loses
+its ownership/privileges and the app will fail with errors like
+`permission denied for table ...` or `password authentication failed`.
+
+**Always recreate the app user right after restoring:**
+
+```bash
+# 1. Restore the data
+./scripts/backups/restore.sh data/backups/backup_myapp_DATE.sql.gz myapp
+
+# 2. Recreate the app user as owner (use the EXACT password from your app's DATABASE_URL)
+PGSTACK_PASSWORD='your-app-password' \
+  ./scripts/users/add-user.sh myapp owner myapp_app
+
+# 3. Restart the app so it reconnects
+```
+
+Using `owner` is what makes it work: it takes ownership of all restored tables and
+sequences, so the app can read, write, and run migrations without
+`permission denied`. In the Manager UI, this is **Users → Add user → owner**.
+
+> Tip: the password must match the one in your app's `DATABASE_URL`. If you ever
+> see `password authentication failed`, just re-run step 2 (or
+> `./scripts/users/set-password.sh myapp_app`) with the correct password.
+
 ## Verify DNS connectivity
 
 | Step | Command |
