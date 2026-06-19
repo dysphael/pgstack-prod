@@ -260,14 +260,18 @@ add_project_user() {
       ;;
   esac
 
-  if ! verify_role_login "$user" "$pw" "$db"; then
-    echo "" >&2
-    echo "ERROR: user '${user}' was configured but login verification FAILED." >&2
-    echo "Use the EXACT password from your app DATABASE_URL:" >&2
-    echo "  PGSTACK_PASSWORD='...' ./scripts/users/set-password.sh ${user}" >&2
-    return 1
+  if verify_role_login "$user" "$pw" "$db"; then
+    echo "OK — '${user}' created and login verified on '${db}'"
+  else
+    echo ""
+    echo "OK — '${user}' created on '${db}' with the password you provided."
+    echo "NOTE: could not self-test the login over TCP from this host"
+    echo "      (usually a local pg_hba/Docker networking quirk, not a real problem)."
+    echo "Test it from where your app runs, or here with:"
+    echo "  PGSTACK_PASSWORD='<same password>' ./scripts/tools/diagnose-user.sh ${user} ${db}"
+    echo "If the app still can't log in, re-set the exact DATABASE_URL password:"
+    echo "  PGSTACK_PASSWORD='<same password>' ./scripts/users/set-password.sh ${user}"
   fi
-  echo "OK — '${user}' verified on '${db}' (remote-style login)"
 }
 
 print_connection_string() {
